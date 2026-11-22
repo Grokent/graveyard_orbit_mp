@@ -69,6 +69,17 @@ in-memory `StructureCatalog` — no game assets are modified.
 Bands are inherited from the destroyer's definitions (both maps use layers 1–5);
 material/enemy seeding is therefore destroyer-flavoured across the merged field.
 
+## Setup (fresh clone)
+
+```bash
+./setup.sh          # portable .NET SDK + BepInEx compile references
+./build.sh
+./deploy.sh
+```
+
+`setup.sh` installs everything project-locally (`tools/`); nothing is installed
+system-wide. Set `GAME_DIR` if the game is not in the default Steam library.
+
 ## Build & install
 
 ```bash
