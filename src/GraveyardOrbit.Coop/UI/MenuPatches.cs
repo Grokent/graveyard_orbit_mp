@@ -27,8 +27,6 @@ namespace GraveyardOrbit.Coop
 
         private static void Inject(MainMenuController menu)
         {
-            CombinedContract.EnsureInjected();
-
             VisualElement root = menu.Root;
             if (root == null) return;
             LastMenuRoot = root;

@@ -33,7 +33,6 @@ namespace GraveyardOrbit.Coop
 
             try
             {
-                CombinedContract.EnsureInjected();
                 SaveSlots.Switch(SaveSlot.Custom);
 
                 var start = AccessTools.Method(typeof(MainMenuBoot), "StartContract");

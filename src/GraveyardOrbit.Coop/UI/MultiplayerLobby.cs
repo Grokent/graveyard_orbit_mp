@@ -50,7 +50,6 @@ namespace GraveyardOrbit.Coop
         public static void Open(VisualElement host)
         {
             if (host == null) return;
-            CombinedContract.EnsureInjected();
             if (IsOpen) { Refresh(); return; }
 
             _modal = host.Q<VisualElement>("coop-lobby");

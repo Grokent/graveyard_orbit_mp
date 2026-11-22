@@ -62,23 +62,6 @@ if (Test-Path $mod) {
     Add-Line "Mod DLL   : NOT FOUND"
 }
 
-$map = Join-Path $game "BepInEx\plugins\GraveyardOrbit.Coop\maps\wrecked_space_rock.json"
-if (Test-Path $map) {
-    $mi = Get-Item $map
-    Add-Line ("Map file  : " + $mi.Length + " bytes")
-    Add-Line ("Map SHA256: " + (Get-FileHash $map -Algorithm SHA256).Hash)
-    $flat = (Get-Content $map -Raw) -replace "\s", ""
-    $countText = "?"
-    if ($flat -match '"count":(\d+)') { $countText = $matches[1] }
-    $boundsText = ""
-    if ($flat -match '"bounds":\{"q":\[(-?\d+),(-?\d+)\],"r":\[(-?\d+),(-?\d+)\]') {
-        $boundsText = "q[" + $matches[1] + "," + $matches[2] + "] r[" + $matches[3] + "," + $matches[4] + "]"
-    }
-    Add-Line ("Map stats : " + $countText + " cells " + $boundsText)
-} else {
-    Add-Line "Map file  : not present (the mod will regenerate it)"
-}
-
 $cfg = Join-Path $game "BepInEx\config\agentbox.graveyardorbit.coop.cfg"
 if (Test-Path $cfg) {
     Copy-Item $cfg (Join-Path $folder "coop-config.cfg") -Force

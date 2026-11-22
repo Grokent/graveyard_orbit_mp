@@ -22,7 +22,7 @@ You only need the release zip — no compiler, no setup, no separate Linux build
 2. In Steam, right-click **Graveyard Orbit** → **Manage** → **Browse local files**.
    That opens the game folder (the one containing `GraveyardOrbit.exe`).
 3. Download the release zip:
-   **[GraveyardOrbit-Co-op-0.1.0-MP14.zip](https://github.com/Grokent/graveyard_orbit_mp/releases/latest/download/GraveyardOrbit-Co-op-0.1.0-MP14.zip)**
+   **[GraveyardOrbit-Co-op-0.1.0-MP15.zip](https://github.com/Grokent/graveyard_orbit_mp/releases/latest/download/GraveyardOrbit-Co-op-0.1.0-MP15.zip)**
 4. Extract **everything** from the zip into the game folder that opened in step 2.
    It only adds files (`winhttp.dll`, `doorstop_config.ini`,
    `.doorstop_version`, `changelog.txt`, `BepInEx/`, `Report.*`); nothing in the
@@ -51,9 +51,8 @@ and the `BepInEx` folder from the game folder.
    hosts a friends-only Steam lobby and lists your online friends.
 2. Use **INVITE OTHERS** or a friend row's **INVITE**. Invites carry a lobby
    connect string, so the friend joins even if their game was closed.
-3. The host picks a contract (**WRECKED SPACE ROCK** is first) and presses
-   **START**. Clients automatically receive the host's save, load the contract,
-   and spawn beside the host.
+3. The host picks a contract and presses **START**. Clients automatically
+   receive the host's save, load the contract, and spawn beside the host.
 4. Launch is independent: each player can return to base or launch again without
    pulling anyone else out of the base or the upgrade screen. A structure clear
    is mirrored to everyone.
@@ -90,17 +89,6 @@ Logs and settings:
   are simulated per player, so swarm instances are not bit-identical across
   machines.
 - Early-access co-op: expect rough edges, and please send a report (below).
-
-## The combined contract: WRECKED SPACE ROCK
-
-`Game/CombinedContract.cs` merges the game's own **Wrecked Destroyer** and
-**Space Rock** hex fields at runtime, centres the result on the planet's x axis,
-separates the shapes by at least 2 empty cells, and injects it into the
-in-memory `StructureCatalog` (first in the contract list). **No game assets are
-modified or redistributed.** The merged map is generated locally on first run
-and cached at
-`BepInEx/plugins/GraveyardOrbit.Coop/maps/wrecked_space_rock.json`; delete that
-file to regenerate it.
 
 ## Build from source (developers)
 

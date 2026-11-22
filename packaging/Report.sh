@@ -8,7 +8,6 @@ mkdir -p "$OUT"
 
 SAVE_DIR="$HOME/.local/share/Steam/steamapps/compatdata/4654120/pfx/drive_c/users/steamuser/AppData/LocalLow/AnchorheadGames/Graveyard Orbit"
 SAVE="$SAVE_DIR/graveyard_orbit_save.json"
-MAP="$DIR/BepInEx/plugins/GraveyardOrbit.Coop/maps/wrecked_space_rock.json"
 
 {
   echo "GRAVEYARD ORBIT CO-OP - DIAGNOSTIC REPORT"
@@ -23,16 +22,6 @@ MAP="$DIR/BepInEx/plugins/GraveyardOrbit.Coop/maps/wrecked_space_rock.json"
   fi
   if [[ -f "$DIR/BepInEx/plugins/GraveyardOrbit.Coop/GraveyardOrbit.Coop.dll" ]]; then
     echo "Mod SHA256: $(sha256sum "$DIR/BepInEx/plugins/GraveyardOrbit.Coop/GraveyardOrbit.Coop.dll" | cut -d' ' -f1)"
-  fi
-  if [[ -f "$MAP" ]]; then
-    echo "Map       : $(stat -c%s "$MAP") bytes"
-    echo "Map SHA256: $(sha256sum "$MAP" | cut -d' ' -f1)"
-    FLAT="$(mktemp)"
-    tr -d '[:space:]' < "$MAP" > "$FLAT"
-    COUNT="$(grep -o '"count":[0-9]*' "$FLAT" | head -1)"
-    BOUNDS="$(grep -o '"bounds":{[^}]*}' "$FLAT" | head -1)"
-    rm -f "$FLAT"
-    echo "Map stats : $COUNT $BOUNDS"
   fi
   echo
   if [[ -f "$SAVE" ]]; then

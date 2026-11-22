@@ -4,12 +4,11 @@
 
 BepInEx/Harmony co-op multiplayer mod for **Graveyard Orbit** (Unity, Mono).
 Steam P2P lobbies, up to 4 players, shared host save, host-authoritative enemies,
-synced tiles/loot/deaths/radar/weapon FX, and a runtime-generated merged
-contract (no game assets are redistributed).
+synced tiles/loot/deaths/radar/weapon FX. No game assets are redistributed.
 
 - **Repo:** https://github.com/Grokent/graveyard_orbit_mp (branch `main`)
 - **License:** MIT (`LICENSE`); BepInEx LGPL-2.1 notices in `THIRD_PARTY_NOTICES.md`
-- **Current build tag:** `MP BUILD 14` — bump `BuildTag` in `CoopPlugin.cs` for
+- **Current build tag:** `MP BUILD 15` — bump `BuildTag` in `CoopPlugin.cs` for
   every release; mismatched builds are blocked in the lobby.
 
 ## Environment (assume these, don't re-ask)
@@ -56,7 +55,6 @@ src/GraveyardOrbit.Coop/
   Game/SpawnFan.cs         15° centred spawn fan
   Game/GameFlow.cs         host START, seed forcing, save capture
   Game/ClientJoin.cs       client save apply, seed force, scene load, win/return
-  Game/CombinedContract.cs WRECKED SPACE ROCK runtime merge (map generated locally)
   Game/EnemySync.cs        host-authoritative enemy snapshots/damage + rotor hide
   Game/TileSync.cs         destroyed-tile sync + GameState/radar bookkeeping
   Game/LootSync.cs         resource mote sync

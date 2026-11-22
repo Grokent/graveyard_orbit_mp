@@ -1,10 +1,9 @@
-GRAVEYARD ORBIT — CO-OP MOD (MP BUILD 14)
+GRAVEYARD ORBIT — CO-OP MOD (MP BUILD 15)
 =========================================
 
 WHAT THIS IS
-  A co-op mod for Graveyard Orbit: Steam lobby, friend invites, a shared
-  contract picker, and a combined contract ("WRECKED SPACE ROCK"). Up to 4
-  players. Everyone needs this mod installed.
+  A co-op mod for Graveyard Orbit: Steam lobby, friend invites and a shared
+  contract picker. Up to 4 players. Everyone needs this mod installed.
 
 DISCLAIMER
   This mod is 100% vibe coded and 100% the product of AI use. It is an
@@ -21,7 +20,7 @@ INSTALL (SAME ON WINDOWS AND LINUX)
   2. In Steam, right-click Graveyard Orbit > Manage > Browse local files.
      That opens the game folder (the one containing GraveyardOrbit.exe).
   3. Download the release zip:
-       https://github.com/Grokent/graveyard_orbit_mp/releases/latest/download/GraveyardOrbit-Co-op-0.1.0-MP14.zip
+       https://github.com/Grokent/graveyard_orbit_mp/releases/latest/download/GraveyardOrbit-Co-op-0.1.0-MP15.zip
   4. Extract EVERYTHING from the zip into the game folder that opened in step 2.
      It only adds files; nothing in the original game is replaced:
        winhttp.dll
@@ -43,10 +42,9 @@ USING IT
     INVITE button. Invites carry a lobby connect string, so the friend joins
     whether their game is already running or closed.
   - Your friend accepts the Steam invite; the lobby opens for them automatically.
-  - The host picks a contract (WRECKED SPACE ROCK is first in the list) and
-    presses START. Clients automatically receive the host's save and load the
-    game with them. The client's previous save is backed up next to it as
-    graveyard_orbit_save.json.coop-backup.
+  - The host picks a contract and presses START. Clients automatically
+    receive the host's save and load the game with them. The client's previous
+    save is backed up next to it as graveyard_orbit_save.json.coop-backup.
   - Each player launches and returns to base independently. Clearing the
     structure is mirrored to everyone.
 
@@ -72,19 +70,12 @@ CURRENT TEST LIMITATIONS
   - Enemy attack cooldowns and swarm units are simulated per player, so swarm
     instances are not bit-identical between machines.
 
-THE COMBINED CONTRACT
-  WRECKED SPACE ROCK is generated at runtime by the mod from the game's own
-  Wrecked Destroyer and Space Rock contracts. No game assets are modified or
-  redistributed. The generated map is cached at:
-    BepInEx/plugins/GraveyardOrbit.Coop/maps/wrecked_space_rock.json
-  Delete that file to have the mod regenerate it on the next launch.
-
 LOGS / SETTINGS
   Log:      BepInEx/LogOutput.log
   Settings: BepInEx/config/agentbox.graveyardorbit.coop.cfg
 
 MULTIPLAYER BUILD NUMBER
-  This package is MP BUILD 14. The build is shown on the MULTIPLAYER menu entry
+  This package is MP BUILD 15. The build is shown on the MULTIPLAYER menu entry
   and in the lobby header. Both players must run the same build; if they do not,
   the lobby shows a red BUILD MISMATCH warning and START is disabled.
 
