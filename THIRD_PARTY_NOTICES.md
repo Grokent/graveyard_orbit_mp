@@ -40,8 +40,8 @@ link above, and the ZIP includes the unmodified loader files.
 
 ## Game content
 
-This is an unofficial fan mod. Graveyard Orbit and its assets belong to
-Anchorhead Games. The bundled map (`assets/maps/wrecked_space_rock.json`) is
-generated from the game's own contract data at runtime by this mod and is
-provided only for use with a legitimately owned copy of the game. No game
-code or asset files are redistributed in this repository.
+This is an unofficial, AI-generated fan mod. Graveyard Orbit and its assets
+belong to Anchorhead Games. The combined contract is generated at runtime from
+the game's own contract data by this mod, for use with a legitimately owned copy
+of the game. No game code or game asset files are redistributed in this
+repository or in the release zip.

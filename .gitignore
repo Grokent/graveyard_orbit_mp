@@ -7,5 +7,6 @@ src/**/obj/
 *.user
 
 dist/
+release/stage/
 tools/*.zip
 .DS_Store

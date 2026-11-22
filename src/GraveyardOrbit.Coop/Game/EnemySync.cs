@@ -8,16 +8,20 @@ using UnityEngine;
 namespace GraveyardOrbit.Coop
 {
     /// <summary>
-    /// Host-authoritative enemy sync. The host owns enemy HP/movement and damage;
-    /// clients suppress local EnemyManager simulation and apply snapshots to the
-    /// seeded enemy visuals. Client damage is forwarded to the host.
+    /// Enemy sync. Host keeps authority over enemy HP/death via snapshots, but
+    /// each player's own EnemyManager simulates attacks locally, so enemies and
+    /// attack swarms engage the host and every client equally. Client damage is
+    /// forwarded while host snapshots are flowing; without them the client
+    /// falls back to fully local enemy damage.
     /// </summary>
     internal static class EnemySync
     {
         private const float SnapshotInterval = 1f / 15f;
         private const float StaleAfter = 0.6f;
+        private const float AuthorityTimeout = 3f;
 
         private static float _lastSnapshot;
+        private static float _lastApply;
         private static bool _gotFirst;
         private static readonly Dictionary<long, float> _lastSeen = new Dictionary<long, float>();
         private static readonly HashSet<long> _hidden = new HashSet<long>();
@@ -30,15 +34,38 @@ namespace GraveyardOrbit.Coop
         private static bool _refsTried;
         private static bool _refsOk;
 
-        internal static bool SuppressLocalSim =>
-            CoopSession.Mode == SessionMode.Client && CoopSession.Sortie != null;
+        /// <summary>
+        /// True while host snapshots are flowing: enemy HP is host-authoritative,
+        /// so client damage is forwarded instead of applied locally, and enemies
+        /// the host has not revealed/has killed do not attack locally.
+        /// </summary>
+        internal static bool HostAuthority =>
+            CoopSession.Mode == SessionMode.Client && CoopSession.Sortie != null &&
+            _gotFirst && Time.unscaledTime - _lastApply < AuthorityTimeout;
 
         internal static void Reset()
         {
             _gotFirst = false;
             _lastSnapshot = 0f;
+            _lastApply = 0f;
             _lastSeen.Clear();
             _hidden.Clear();
+        }
+
+        /// <summary>Client guard: skip attacks from enemies the host does not have live.</summary>
+        internal static bool AllowAttack(object enemy)
+        {
+            try
+            {
+                if (!HostAuthority || enemy == null) return true;
+                EnsureRefs();
+                int hp = _hpF != null ? (int)_hpF.GetValue(enemy) : 1;
+                if (hp <= 0) return false;
+                if (_cellF == null) return true;
+                var cell = (Vector2Int)_cellF.GetValue(enemy);
+                return !_hidden.Contains(Key(cell.x, cell.y));
+            }
+            catch { return true; }
         }
 
         // ------------------------------------------------------------ host
@@ -135,6 +162,7 @@ namespace GraveyardOrbit.Coop
                 }
             }
             _gotFirst = true;
+            _lastApply = Time.unscaledTime;
 
             try { _tickBars?.Invoke(mgr, new object[] { 0f }); } catch { }
         }
@@ -173,7 +201,7 @@ namespace GraveyardOrbit.Coop
         /// <summary>Called from the DamageTarget prefix. Returns true when handled.</summary>
         internal static bool InterceptClientDamage(int kind, int idx, int dmg)
         {
-            if (!SuppressLocalSim || kind != 1 || dmg <= 0) return false;
+            if (!HostAuthority || kind != 1 || dmg <= 0) return false;
             EnemyManager mgr = Manager();
             if (mgr == null) return false;
             IList list = Active(mgr);
@@ -189,6 +217,16 @@ namespace GraveyardOrbit.Coop
         // ------------------------------------------------------------ helpers
 
         private static EnemyManager Manager() => UnityEngine.Object.FindAnyObjectByType<EnemyManager>();
+
+        /// <summary>Host's projectile hit radius (30 px, where px = hexSize/32).</summary>
+        internal static float ShotHitRadius(EnemyManager mgr)
+        {
+            EnsureRefs();
+            float hex = 1f;
+            try { if (_hexF != null && mgr != null) hex = (float)_hexF.GetValue(mgr); }
+            catch { }
+            return hex * 30f / 32f;
+        }
 
         private static IList Active(EnemyManager mgr)
         {
@@ -263,6 +301,20 @@ namespace GraveyardOrbit.Coop
 
         private static void Hide(object e)
         {
+            // Park the enemy far outside every attack radius so a client-side
+            // EnemyManager cannot fire from an enemy the host has already lost.
+            try
+            {
+                if (_worldF != null)
+                {
+                    var parked = (Vector3)_worldF.GetValue(e);
+                    parked.x = 1e6f;
+                    parked.z = 1e6f;
+                    _worldF.SetValue(e, parked);
+                }
+            }
+            catch { }
+
             var vis = _visF?.GetValue(e) as GameObject;
             if (vis != null) vis.SetActive(false);
             var ring = _ringF?.GetValue(e) as GameObject;

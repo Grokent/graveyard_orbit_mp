@@ -154,6 +154,7 @@ namespace GraveyardOrbit.Coop
         {
             SelectedContractId = contractId;
             ContractChanged?.Invoke(contractId);
+            TileSync.Reset();
             if (Transport == null || !IsHost) return;
 
             SendContract();
@@ -359,6 +360,7 @@ namespace GraveyardOrbit.Coop
             _saveChunks = 0;
             _saveId = null;
 
+            TileSync.Reset();
             CoopPlugin.Log.LogInfo("[coop] host started — entering the session");
             ClientJoin.Enter(_startScene, _startContract, saveJson, _startLevelSeed, _startAnomalySeed);
         }
@@ -401,6 +403,7 @@ namespace GraveyardOrbit.Coop
             HostBuild = null;
             DestroyAllViews();
             Sortie = null;
+            TileSync.Reset();
             SelectedContractId = null;
             ActiveLobbyId = 0;
             _saveParts.Clear();
@@ -735,11 +738,7 @@ namespace GraveyardOrbit.Coop
                     break;
 
                 case nameof(MessageKind.TileDestroyed):
-                    try
-                    {
-                        TileField tf = Sortie != null ? Sortie.Field : null;
-                        if (tf != null) TileSync.Apply(tf, msg.dq, msg.dr);
-                    }
+                    try { TileSync.Apply(msg.dq, msg.dr); }
                     catch (Exception ex) { CoopPlugin.Log.LogDebug("[tile] apply failed: " + ex.Message); }
                     if (IsHost) Relay(from, data, Delivery.Reliable);
                     break;

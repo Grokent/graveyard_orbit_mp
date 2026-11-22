@@ -123,8 +123,9 @@ namespace GraveyardOrbit.Coop
             CoopSession.Transport.Broadcast(Protocol.Encode(msg), Delivery.Unreliable);
         }
 
-        /// <summary>Host enemy projectile, mirrored as a cosmetic bolt on clients.</summary>
-        public static void BroadcastEnemyShot(Vector3 from, Vector3 dir, float speed, float maxDist)
+        /// <summary>Host enemy projectile: mirrored as a real VFX bolt that can hit the client ship.</summary>
+        public static void BroadcastEnemyShot(Vector3 from, Vector3 dir, float speed, float maxDist,
+            int dmg, float scale, float hitDist)
         {
             if (CoopSession.Mode == SessionMode.Off || CoopSession.Transport == null) return;
             if (CoopSession.Sortie == null || dir.sqrMagnitude < 1e-6f) return;
@@ -132,11 +133,14 @@ namespace GraveyardOrbit.Coop
             var msg = new NetMessage
             {
                 kind = MessageKind.FxShot.ToString(),
-                fx = "bolt",
+                fx = "enemy",
                 ox = from.x, oy = from.y, oz = from.z,
                 dx = dir.x, dy = dir.y, dz = dir.z,
                 speed = Mathf.Max(1f, speed),
                 dist = Mathf.Max(1f, maxDist),
+                dmg = dmg,
+                fxScale = Mathf.Max(0.01f, scale),
+                hit = Mathf.Max(0.1f, hitDist),
                 cr = 1f, cg = 0.35f, cb = 0.25f
             };
             CoopSession.Transport.Broadcast(Protocol.Encode(msg), Delivery.Unreliable);
@@ -146,6 +150,9 @@ namespace GraveyardOrbit.Coop
         {
             try
             {
+                // Never spawn weapon visuals in the base scene.
+                if (CoopSession.Sortie == null) return;
+
                 var origin = new Vector3(msg.ox, msg.oy, msg.oz);
                 var dir = new Vector3(msg.dx, msg.dy, msg.dz);
                 var color = new Color(msg.cr, msg.cg, msg.cb, 1f);
@@ -160,6 +167,12 @@ namespace GraveyardOrbit.Coop
                 if (msg.fx == "beam")
                 {
                     PlayBeam(origin, new Vector3(msg.tx, msg.ty, msg.tz), color);
+                }
+                else if (msg.fx == "enemy")
+                {
+                    PlayEnemyShot(origin, dir.normalized, Mathf.Max(1f, msg.speed),
+                        Mathf.Max(1f, msg.dist), msg.dmg, Mathf.Max(0.01f, msg.fxScale),
+                        Mathf.Max(0.1f, msg.hit));
                 }
                 else if (!string.IsNullOrEmpty(msg.fxName))
                 {
@@ -191,6 +204,52 @@ namespace GraveyardOrbit.Coop
             go.transform.localScale = Vector3.one * Mathf.Max(0.1f, scale);
             var mover = go.AddComponent<RemoteVisual>();
             mover.Setup(origin, dir, speed, dist);
+        }
+
+        private static void PlayEnemyShot(Vector3 origin, Vector3 dir, float speed, float dist,
+            int dmg, float scale, float hitDist)
+        {
+            // Match the host's own shot visual: EnemyManager.SpawnShot puts a
+            // LavaMissile VFX body (with its fire animation) on each projectile.
+            Vector3 start = new Vector3(origin.x, 1f, origin.z);
+            var go = new GameObject("CoopRemoteEnemyShot");
+            go.transform.position = start;
+            Vector3 flat = new Vector3(dir.x, 0f, dir.z);
+            if (flat.sqrMagnitude < 1e-6f) flat = Vector3.forward;
+            go.transform.rotation = Quaternion.LookRotation(flat.normalized);
+
+            bool visual = false;
+            try
+            {
+                GameObject prefab = Resources.Load<GameObject>("WeaponFX/LavaMissile");
+                if (prefab != null)
+                {
+                    EnemyManager.FxBody(prefab, go.transform, Mathf.Max(0.01f, scale) * 6f);
+                    visual = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                CoopPlugin.Log.LogDebug("[fx] enemy shot visual failed: " + ex.Message);
+            }
+
+            if (!visual)
+            {
+                var lr = go.AddComponent<LineRenderer>();
+                Material mat = LineMaterial(new Color(1f, 0.35f, 0.25f));
+                lr.sharedMaterial = mat;
+                lr.useWorldSpace = true;
+                lr.positionCount = 2;
+                lr.startWidth = Mathf.Max(0.1f, hitDist * 0.4f);
+                lr.endWidth = Mathf.Max(0.05f, hitDist * 0.15f);
+                lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                lr.receiveShadows = false;
+                lr.startColor = new Color(1f, 0.35f, 0.25f, 1f);
+                lr.endColor = new Color(1f, 0.35f, 0.25f, 0.25f);
+            }
+
+            var mover = go.AddComponent<RemoteEnemyShot>();
+            mover.Setup(start, dir, speed, dist, dmg, hitDist);
         }
 
         private static void PlayBolt(Vector3 origin, Vector3 dir, float speed, float dist, Color color)
@@ -321,6 +380,72 @@ namespace GraveyardOrbit.Coop
             Vector3 tail = head - _dir * Mathf.Min(1.6f, Mathf.Max(0.25f, _speed * 0.06f));
             _line.SetPosition(0, tail);
             _line.SetPosition(1, head);
+        }
+    }
+
+    /// <summary>
+    /// Client-side mirror of a host enemy projectile. Flies the same path the
+    /// host simulated and applies local hull damage when it reaches this
+    /// client's ship (the host only tracks its own ship).
+    /// </summary>
+    internal sealed class RemoteEnemyShot : MonoBehaviour
+    {
+        private Vector3 _origin;
+        private Vector3 _dir;
+        private float _speed;
+        private float _dist;
+        private int _dmg;
+        private float _hit;
+        private float _t;
+        private LineRenderer _line;
+
+        public void Setup(Vector3 origin, Vector3 dir, float speed, float dist, int dmg, float hit)
+        {
+            _origin = origin;
+            _dir = dir;
+            _speed = speed;
+            _dist = dist;
+            _dmg = dmg;
+            _hit = hit;
+            _line = GetComponent<LineRenderer>();
+        }
+
+        private void OnDestroy()
+        {
+            if (_line != null && _line.sharedMaterial != null) Destroy(_line.sharedMaterial);
+        }
+
+        private void Update()
+        {
+            _t += Time.deltaTime;
+            float travelled = _speed * _t;
+            if (travelled >= _dist)
+            {
+                Destroy(gameObject);
+                return;
+            }
+
+            Vector3 head = _origin + _dir * travelled;
+            if (_line != null)
+            {
+                Vector3 tail = head - _dir * Mathf.Min(2.5f, Mathf.Max(0.4f, _speed * 0.08f));
+                _line.SetPosition(0, tail);
+                _line.SetPosition(1, head);
+            }
+            else
+            {
+                transform.position = head;
+            }
+
+            ShipController ship = CoopSession.Sortie != null ? CoopSession.Sortie.Ship : null;
+            if (ship == null) return;
+
+            Vector3 delta = head - ship.transform.position;
+            delta.y = 0f;
+            if (delta.sqrMagnitude > _hit * _hit) return;
+
+            try { ship.OnEnemyHit(_dmg, head); } catch { }
+            Destroy(gameObject);
         }
     }
 

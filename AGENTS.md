@@ -4,11 +4,12 @@
 
 BepInEx/Harmony co-op multiplayer mod for **Graveyard Orbit** (Unity, Mono).
 Steam P2P lobbies, up to 4 players, shared host save, host-authoritative enemies,
-synced tiles/loot/deaths/radar/weapon FX, and a merged 50,499-cell contract.
+synced tiles/loot/deaths/radar/weapon FX, and a runtime-generated merged
+contract (no game assets are redistributed).
 
 - **Repo:** https://github.com/Grokent/graveyard_orbit_mp (branch `main`)
 - **License:** MIT (`LICENSE`); BepInEx LGPL-2.1 notices in `THIRD_PARTY_NOTICES.md`
-- **Current build tag:** `MP BUILD 12` — bump `BuildTag` in `CoopPlugin.cs` for
+- **Current build tag:** `MP BUILD 14` — bump `BuildTag` in `CoopPlugin.cs` for
   every release; mismatched builds are blocked in the lobby.
 
 ## Environment (assume these, don't re-ask)
@@ -30,8 +31,8 @@ Everything is project-local; no system installs.
 ```bash
 ./setup.sh      # portable .NET 9 SDK -> tools/dotnet, BepInEx refs, optional ilspycmd
 ./build.sh      # src/GraveyardOrbit.Coop -> bin/Release/GraveyardOrbit.Coop.dll
-./deploy.sh     # copies DLL + assets/maps/wrecked_space_rock.json into BepInEx/plugins/GraveyardOrbit.Coop
-./package.sh    # dist/GraveyardOrbit-Co-op-0.1.0-win64.zip (BepInEx + plugin + map + licenses)
+./deploy.sh     # copies the built DLL into BepInEx/plugins/GraveyardOrbit.Coop
+./package.sh    # release/GraveyardOrbit-Co-op-0.1.0-MP<build>.zip (BepInEx + plugin + licenses)
 ```
 
 - `decompiled/` = ILSpy output of `Assembly-CSharp.dll`; **gitignored and never
@@ -55,7 +56,7 @@ src/GraveyardOrbit.Coop/
   Game/SpawnFan.cs         15° centred spawn fan
   Game/GameFlow.cs         host START, seed forcing, save capture
   Game/ClientJoin.cs       client save apply, seed force, scene load, win/return
-  Game/CombinedContract.cs WRECKED SPACE ROCK runtime merge + map file load
+  Game/CombinedContract.cs WRECKED SPACE ROCK runtime merge (map generated locally)
   Game/EnemySync.cs        host-authoritative enemy snapshots/damage + rotor hide
   Game/TileSync.cs         destroyed-tile sync + GameState/radar bookkeeping
   Game/LootSync.cs         resource mote sync
@@ -66,6 +67,7 @@ src/GraveyardOrbit.Coop/
   UI/MultiplayerLobby.cs   lobby window (plain clickable buttons, not themed)
   UI/RadarPatches.cs       remote player dots
   packaging/Report.*       diagnostics collectors (shipped in zip)
+  release/                 redistributable install zip (committed)
 ```
 
 ## Design rules that must not regress
@@ -77,17 +79,29 @@ src/GraveyardOrbit.Coop/
   `anomaly_seed` **after** `StartContract` (NewContract resets `Root`), then
   sends a gzipped/chunked save. Clients write it, force the explicit seeds, and
   load `MiningScene`.
-- **Enemies are host-authoritative:** 15 Hz snapshots by hex cell; clients
-  suppress `EnemyManager.Update` and forward damage. Also toggle the `rotor`
-  GameObject (lightning drones keep firing otherwise).
+- **Enemy HP is host-authoritative, enemy attacks are local:** the host sends
+  15 Hz snapshots by hex cell; clients apply them (and `rotor` toggles) and
+  forward damage. Do **not** suppress `EnemyManager.Update` on clients — each
+  player's own manager runs the attack/swarm simulation against their own ship,
+  so turrets, spiral shots and attack swarms engage every player equally. A
+  `DoAttack` prefix blocks attacks from enemies the host does not have live
+  while snapshots are fresh (`EnemySync.HostAuthority`, 3 s timeout). Without
+  fresh snapshots (e.g. host in base) clients fall back to fully local enemy
+  damage.
+- **Dormant-enemy reveals follow destroyed tiles:** remote tile applies call
+  `EnemyManager.OnTileDestroyed`, otherwise host/receiver enemy sets diverge.
 - **Tiles:** both sides simulate local damage; every destruction is reported.
   Remote apply uses `StripCamouflage` + `GameState.RecordDestroyed` + radar
-  `OnTileDestroyed`. No loot/echo on remote apply.
+  `OnTileDestroyed`. No loot/echo on remote apply. Destructions that arrive
+  while a player is in the base are recorded in `GameState` and replayed into
+  the next sortie's `TileField` (pending set in `TileSync`).
 - **Returns are independent.** Host return/launch must NOT move clients. Launch
   mirroring was removed deliberately. Only `cleared` (win) is mirrored.
 - **Weapon FX:** real VFX prefab when available (visualFx/fxScale), thin line
   fallback; beams from `DrawBeam`; dynamo orbs from `SweeperSystem.TickEmit`;
-  chain arcs from `EnemyManager.SpawnArc`; enemy shots from `SpawnShot`.
+  chain arcs from `EnemyManager.SpawnArc`; enemy shots from `SpawnShot`, which
+  reuse the host's `WeaponFX/LavaMissile` body and apply local hull damage on
+  clients that fly into them.
 - **UI style:** menu/lobby use MetaUi/MenuStyles/SlabFrame look. Lobby footer
   buttons are plain clickable VisualElements with dark fill + coloured border
   (Button theme states turn green otherwise).
@@ -124,7 +138,11 @@ steam -applaunch 4654120
 ## Known limitations
 
 - Tile HP/crack stages are local (destruction itself is synced).
-- Host enemies target only the host's ship; clients take no enemy fire yet.
+- Host enemies target the host's ship; each client's local enemy simulation
+  targets that client's ship, so all players are engaged.
+- Enemy HP/position stay host-authoritative; attack cooldowns and swarm units
+  are simulated per player, so swarm instances are not bit-identical between
+  machines.
 - Loot collection is per-player; only loot spawns are shared.
 - Sortie start/launch timing is independent after the initial START handoff.
 - Probe/beam visual polish may still need tuning.

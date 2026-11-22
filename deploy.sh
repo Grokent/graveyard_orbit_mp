@@ -24,11 +24,8 @@ else
 fi
 
 PLUGIN_DIR="$GAME/BepInEx/plugins/GraveyardOrbit.Coop"
-mkdir -p "$PLUGIN_DIR/maps"
+mkdir -p "$PLUGIN_DIR"
 cp -f "$DLL" "$PLUGIN_DIR/"
-if [[ -f "$ROOT/assets/maps/wrecked_space_rock.json" ]]; then
-  cp -f "$ROOT/assets/maps/wrecked_space_rock.json" "$PLUGIN_DIR/maps/"
-fi
 [[ -f "${DLL%.dll}.pdb" ]] && cp -f "${DLL%.dll}.pdb" "$PLUGIN_DIR/" || true
 
 echo

@@ -90,6 +90,7 @@ namespace GraveyardOrbit.Coop
         // projectile visual + loot
         public string fxName;
         public float fxScale = 1f;
+        public float hit;       // client-side hit radius for mirrored enemy shots
         public float lx, ly, lz;
         public int lv;
         public string lmat;
