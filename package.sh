@@ -22,7 +22,10 @@ mkdir -p "$STAGE/BepInEx/plugins/GraveyardOrbit.Coop"
 unzip -oq "$BEP_ZIP" -d "$STAGE"
 
 cp -f "$DLL" "$STAGE/BepInEx/plugins/GraveyardOrbit.Coop/"
-cp -f "$ROOT/INSTALL.txt" "$STAGE/INSTALL.txt"
+# Keep the shipped install text in sync with the build number automatically.
+sed -e "s/MP BUILD [0-9][0-9]*/MP BUILD $BUILD/g" \
+    -e "s/MP[0-9][0-9]*\.zip/MP$BUILD.zip/g" \
+    "$ROOT/INSTALL.txt" > "$STAGE/INSTALL.txt"
 cp -f "$ROOT/LICENSE" "$STAGE/LICENSE"
 cp -f "$ROOT/THIRD_PARTY_NOTICES.md" "$STAGE/THIRD_PARTY_NOTICES.md"
 mkdir -p "$STAGE/licenses"
@@ -30,7 +33,11 @@ cp -f "$ROOT/licenses/LGPL-2.1.txt" "$STAGE/licenses/"
 cp -f "$ROOT/packaging/Report.bat" "$STAGE/Report.bat"
 cp -f "$ROOT/packaging/Report.ps1" "$STAGE/Report.ps1"
 cp -f "$ROOT/packaging/Report.sh" "$STAGE/Report.sh"
-chmod +x "$STAGE/Report.sh"
+cp -f "$ROOT/packaging/Update.bat" "$STAGE/Update.bat"
+cp -f "$ROOT/packaging/Update.ps1" "$STAGE/Update.ps1"
+cp -f "$ROOT/packaging/Update.sh" "$STAGE/Update.sh"
+chmod +x "$STAGE/Report.sh" "$STAGE/Update.sh"
+printf 'MP%s\n' "$BUILD" > "$STAGE/VERSION.txt"
 
 (
   cd "$STAGE"

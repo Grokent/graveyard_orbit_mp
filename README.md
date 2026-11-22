@@ -21,12 +21,13 @@ You only need the release zip — no compiler, no setup, no separate Linux build
 1. Close Graveyard Orbit.
 2. In Steam, right-click **Graveyard Orbit** → **Manage** → **Browse local files**.
    That opens the game folder (the one containing `GraveyardOrbit.exe`).
-3. Download the release zip:
-   **[GraveyardOrbit-Co-op-0.1.0-MP18.zip](https://github.com/Grokent/graveyard_orbit_mp/releases/latest/download/GraveyardOrbit-Co-op-0.1.0-MP18.zip)**
+3. Download the latest release zip from
+   **[Releases](https://github.com/Grokent/graveyard_orbit_mp/releases/latest)**
+   (asset `GraveyardOrbit-Co-op-0.1.0-MP<build>.zip`).
 4. Extract **everything** from the zip into the game folder that opened in step 2.
    It only adds files (`winhttp.dll`, `doorstop_config.ini`,
-   `.doorstop_version`, `changelog.txt`, `BepInEx/`, `Report.*`); nothing in the
-   original game is replaced.
+   `.doorstop_version`, `changelog.txt`, `VERSION.txt`, `BepInEx/`,
+   `Report.*`, `Update.*`); nothing in the original game is replaced.
 5. **Linux / Proton only:** add this launch option once (game → Properties →
    Launch Options). Windows needs no launch options:
 
@@ -39,6 +40,30 @@ You only need the release zip — no compiler, no setup, no separate Linux build
 Both players need the mod, and both must run the **same MP build** (shown on the
 MULTIPLAYER menu entry and in the lobby header). The lobby blocks START on a
 build mismatch.
+
+## Update
+
+The zip ships a self-updater, so after the first install you do not need to
+download zips by hand. It finds your Steam copy of the game, asks GitHub for the
+latest release, compares the build number in `VERSION.txt` and copies the new
+files over the old ones. Settings in `BepInEx/config/` and your save are left
+alone; the previous plugin DLL is kept as `GraveyardOrbit.Coop.dll.bak`.
+
+- **Windows:** double-click **`Update.bat`** in the game folder.
+- **Linux / Steam Deck:** in the game folder, run `./Update.sh`
+  (`chmod +x Update.sh` once if needed).
+
+Both scripts accept:
+
+```
+--force                reinstall even if already on the latest build
+--game-dir "<path>"    use a specific game folder if detection fails
+```
+
+Close the game first. The script prints the installed build when it finishes;
+both players must then be on that same build. Installs from MP16 or older do not
+contain the script yet — update once with the zip from the release page, then
+use the script from then on.
 
 ### Uninstall
 
@@ -128,7 +153,7 @@ folder). Send that archive.
 ```
 src/GraveyardOrbit.Coop/     plugin source
 release/                     local package output (zips are release assets)
-packaging/                   report collectors shipped in the zip
+packaging/                   report collectors + update scripts shipped in the zip
 docs/HOOKS.md                decompiled hook map
 tools/                       project-local .NET SDK, BepInEx zip (gitignored)
 decompiled/                  ILSpy output (gitignored, never redistributed)

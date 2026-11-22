@@ -19,21 +19,44 @@ INSTALL (SAME ON WINDOWS AND LINUX)
   1. Close Graveyard Orbit.
   2. In Steam, right-click Graveyard Orbit > Manage > Browse local files.
      That opens the game folder (the one containing GraveyardOrbit.exe).
-  3. Download the release zip:
-       https://github.com/Grokent/graveyard_orbit_mp/releases/latest/download/GraveyardOrbit-Co-op-0.1.0-MP18.zip
+  3. Download the latest release zip from
+       https://github.com/Grokent/graveyard_orbit_mp/releases/latest
+     (asset GraveyardOrbit-Co-op-0.1.0-MP<build>.zip).
   4. Extract EVERYTHING from the zip into the game folder that opened in step 2.
      It only adds files; nothing in the original game is replaced:
        winhttp.dll
        doorstop_config.ini
        .doorstop_version
        changelog.txt
+       VERSION.txt
        BepInEx/...
        Report.bat / Report.ps1 / Report.sh
+       Update.bat / Update.ps1 / Update.sh
   5. Linux / Steam Deck (Proton) ONLY: add this launch option once
      (game > Properties > Launch Options):
        WINEDLLOVERRIDES="winhttp=n,b" %command%
      Windows needs no launch options.
   6. Launch the game through Steam normally.
+
+UPDATING TO A NEWER BUILD
+  The zip ships its own updater. It finds your Steam copy of the game, downloads
+  the latest GitHub release, compares the build number in VERSION.txt and copies
+  the new files over the old ones. Your settings in BepInEx/config and your save
+  are left alone; the previous plugin DLL is kept as
+  GraveyardOrbit.Coop.dll.bak.
+
+    Windows:  double-click Update.bat in the game folder
+              (or: powershell -ExecutionPolicy Bypass -File Update.ps1)
+    Linux:    cd into the game folder and run ./Update.sh
+
+  Options (both scripts):
+    --force               reinstall even if already on the latest build
+    --game-dir "<path>"   point at the game folder if detection fails
+
+  Close the game before running it. On Linux, set the Proton launch option above
+  once if you have not already. Installs from MP16 or older do not include the
+  script yet: update once with the zip from the release page, then use the
+  script from then on.
 
 USING IT
   - Title screen: MULTIPLAYER (between NEW GAME and SETTINGS).
