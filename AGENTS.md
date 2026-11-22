@@ -67,7 +67,7 @@ src/GraveyardOrbit.Coop/
   UI/MultiplayerLobby.cs   lobby window (plain clickable buttons, not themed)
   UI/RadarPatches.cs       remote player dots
   packaging/Report.*       diagnostics collectors (shipped in zip)
-  release/                 redistributable install zip (committed)
+  release/                 local package output (gitignored; zips are release assets)
 ```
 
 ## Design rules that must not regress
