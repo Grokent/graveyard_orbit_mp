@@ -22,7 +22,7 @@ You only need the release zip — no compiler, no setup, no separate Linux build
 2. In Steam, right-click **Graveyard Orbit** → **Manage** → **Browse local files**.
    That opens the game folder (the one containing `GraveyardOrbit.exe`).
 3. Download the release zip:
-   **[GraveyardOrbit-Co-op-0.1.0-MP15.zip](https://github.com/Grokent/graveyard_orbit_mp/releases/latest/download/GraveyardOrbit-Co-op-0.1.0-MP15.zip)**
+   **[GraveyardOrbit-Co-op-0.1.0-MP16.zip](https://github.com/Grokent/graveyard_orbit_mp/releases/latest/download/GraveyardOrbit-Co-op-0.1.0-MP16.zip)**
 4. Extract **everything** from the zip into the game folder that opened in step 2.
    It only adds files (`winhttp.dll`, `doorstop_config.ini`,
    `.doorstop_version`, `changelog.txt`, `BepInEx/`, `Report.*`); nothing in the
@@ -74,8 +74,10 @@ Logs and settings:
   simulates enemy attacks locally — turrets, spiral shots and attack swarms
   engage the host and all clients equally. Dormant enemies are revealed by
   synced tile destruction.
-- **Weapon FX:** projectiles, probes, beams, dynamo streams, chain arcs and
-  enemy shots use the game's real VFX on peers.
+- **Weapon FX:** beams, pulses, dynamo streams/orbs/blasts, cannon projectiles,
+  probes, chain arcs and enemy shots use the game's real VFX on peers. Each
+  shot carries its weapon and mods, so beam width, colour and pulse shape match
+  what the shooter sees.
 - **Remote ships** are rebuilt from each player's synced loadout; remote players
   appear as dots on the SENSOR MAP.
 - **Deaths:** a destroyed ship disappears for everyone and returns on relaunch.
@@ -88,6 +90,8 @@ Logs and settings:
 - Enemy HP/positions are host-authoritative, but attack cooldowns and swarm units
   are simulated per player, so swarm instances are not bit-identical across
   machines.
+- Pulse waves are rebuilt from their parameters on peers; the particle trail is
+  approximated.
 - Early-access co-op: expect rough edges, and please send a report (below).
 
 ## Build from source (developers)

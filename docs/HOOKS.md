@@ -73,3 +73,25 @@ State.Planet → State.Build → State.Process → State.TakingOff → State.Sor
 - `StructureCatalog.I.Contracts` → `StructureDef { id, DisplayName, DisplayDescription, cellCount, startingMoney }` — inline contract list.
 - `MainMenuBoot.StartContract(StructureDef, bool)` — private; host START reflects into it after `SaveSlots.Switch(SaveSlot.Custom)`.
 - Steam: `SteamMatchmaking.CreateLobby(FriendsOnly, 4)`, `SetLobbyJoinable`, `Callback<LobbyCreated_t>`, `Callback<LobbyEnter_t>`, `Callback<GameLobbyJoinRequested_t>`; `SteamFriends.InviteUserToGame`, `ActivateGameOverlayInviteDialog`, friends list + medium avatars.
+
+## Weapon FX sync hooks (MP16)
+
+All fire events reuse `MessageKind.FxShot`; `NetMessage` now carries `weapon`
+and `mods` plus `w/w2/a0/a1/boom/fx2` for visual parity.
+
+| Hook | Fires when | Sends |
+|---|---|---|
+| `WeaponSystem.DrawBeam(int i, Vector3 to, bool showImpact, int slot)` postfix | any laser/pulse/railgun beam or pop | real `SciFiBeams/BeamLaserOrange` prefab, actual `LineRenderer.widthMultiplier`, tinted material colour, `boom` for the endpoint impact |
+| `ResonatorWave.Step(float dt)` prefix | once per pulse/resonator wave, after `SetStyle`/`SetTrail` | centre, max radius, speed, core/halo/trail widths, colour, cone arc |
+| `SweeperSystem.ShowStream(int i, Vector3 from, Vector3 to)` postfix | dynamo stream tick | `SciFiBeams/BeamLaserBlue`, sweeper stream width/colour |
+| `SweeperSystem.TickEmit(int i, float dt)` prefix/postfix | new dynamo orbs | `WeaponFX/ProtonMissileBlue`, surge-scaled, part mods |
+| `SweeperSystem.PlayBlast(Vector3 at, float radius, float mul)` postfix | dynamo nova/blast | `WeaponFX/DomeNukeBlue` scaled by radius |
+| `ProjectileSystem.SpawnStraight(...)` prefix | cannon/shotgun/machine gun | real `visualFx` + `visualScale` + `impactFx`; weapon from `SpawnFamily`, mods from `SpawnPartUid` |
+| `ProjectileSystem.SpawnProbe(...)` prefix | radar probe | same as above |
+| `EnemyManager.SpawnArc(Vector3 a, Vector3 b, float life, float width)` postfix | chain lightning | thin purple lightning line |
+| `EnemyManager.SpawnShot(...)` prefix | host enemy shot | mirrored `LavaMissile` projectile with local hull damage |
+
+Line width is never hard-coded for a weapon beam: the sender mirrors the
+renderer's `widthMultiplier` so the peer sees the same thickness as the shooter.
+`CoopPlugin.Awake` applies each patch class in its own try/catch, so one broken
+game target cannot disable the rest of the mod.

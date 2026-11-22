@@ -8,7 +8,7 @@ synced tiles/loot/deaths/radar/weapon FX. No game assets are redistributed.
 
 - **Repo:** https://github.com/Grokent/graveyard_orbit_mp (branch `main`)
 - **License:** MIT (`LICENSE`); BepInEx LGPL-2.1 notices in `THIRD_PARTY_NOTICES.md`
-- **Current build tag:** `MP BUILD 15` — bump `BuildTag` in `CoopPlugin.cs` for
+- **Current build tag:** `MP BUILD 16` — bump `BuildTag` in `CoopPlugin.cs` for
   every release; mismatched builds are blocked in the lobby.
 
 ## Environment (assume these, don't re-ask)
@@ -95,11 +95,28 @@ src/GraveyardOrbit.Coop/
   the next sortie's `TileField` (pending set in `TileSync`).
 - **Returns are independent.** Host return/launch must NOT move clients. Launch
   mirroring was removed deliberately. Only `cleared` (win) is mirrored.
-- **Weapon FX:** real VFX prefab when available (visualFx/fxScale), thin line
-  fallback; beams from `DrawBeam`; dynamo orbs from `SweeperSystem.TickEmit`;
-  chain arcs from `EnemyManager.SpawnArc`; enemy shots from `SpawnShot`, which
-  reuse the host's `WeaponFX/LavaMissile` body and apply local hull damage on
-  clients that fly into them.
+- **Weapon FX:** every `FxShot` carries the firing `weapon` and its `mods`, so
+  peers pick the same visual the shooter sees.
+  - Laser/pulse beams: `WeaponSystem.DrawBeam` sends the **real beam prefab**
+    (`SciFiBeams/BeamLaserOrange`) plus the mount's actual
+    `widthMultiplier` and material colour/impact flag. Never use a fixed line
+    width: the shipped remote line looked much thicker than the local beam.
+  - Pulse (resonators) is **not** a projectile: `ResonatorWave.Step` sends the
+    expanding wave (centre, radius, speed, core/halo widths, trail width, colour
+    and cone arc) once per wave, after pulse mods set the style.
+  - Dynamo: `SweeperSystem.ShowStream` sends the blue `BeamLaserBlue` stream
+    with the sweeper's own width/colour; `SweeperSystem.TickEmit` sends each
+    `ProtonMissileBlue` orb (surge-scaled); `SweeperSystem.PlayBlast` sends
+    `DomeNukeBlue` nova rings.
+  - Cannon/shotgun/probe: `ProjectileSystem.SpawnStraight/Probe` send the real
+    `visualFx`, `visualScale` and `impactFx`, read from `SpawnFamily` /
+    `SpawnPartUid` so the weapon and its mods travel with the shot.
+  - Chain arcs: `EnemyManager.SpawnArc`, thin lightning line.
+  - Enemy shots: `EnemyManager.SpawnShot` reuses the host's
+    `WeaponFX/LavaMissile` body and applies local hull damage on clients that
+    fly into them.
+  - Patch classes are applied one at a time in `CoopPlugin.Awake`; a broken
+    target logs an error and does not disable the other hooks.
 - **UI style:** menu/lobby use MetaUi/MenuStyles/SlabFrame look. Lobby footer
   buttons are plain clickable VisualElements with dark fill + coloured border
   (Button theme states turn green otherwise).
@@ -143,7 +160,8 @@ steam -applaunch 4654120
   machines.
 - Loot collection is per-player; only loot spawns are shared.
 - Sortie start/launch timing is independent after the initial START handoff.
-- Probe/beam visual polish may still need tuning.
+- Pulse waves are recreated from their parameters (core/halo/arc); the
+  particle trail/sparks are approximated on peers.
 
 ## Working conventions
 

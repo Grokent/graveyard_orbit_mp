@@ -76,6 +76,12 @@ namespace GraveyardOrbit.Coop
         public float tx, ty, tz;
         public float speed, dist;
         public float cr, cg, cb;
+        public string weapon;    // firing part/family id (laser, dynamo, pulse, cannon...)
+        public string mods;      // comma-joined mod ids on the firing mount
+        public float w, w2;      // beam core width / wave halo width
+        public float a0, a1;     // wave arc start/end angle (radians)
+        public float delay;      // wave start delay (pulse echo mod)
+        public bool boom;        // spawn the impact FX at the beam endpoint
 
         public int levelSeed;
         public int anomalySeed;
@@ -90,6 +96,8 @@ namespace GraveyardOrbit.Coop
         // projectile visual + loot
         public string fxName;
         public float fxScale = 1f;
+        public string fx2;       // impact/splash prefab played at the end of a bolt
+        public float fxScale2 = 1f;
         public float hit;       // client-side hit radius for mirrored enemy shots
         public float lx, ly, lz;
         public int lv;

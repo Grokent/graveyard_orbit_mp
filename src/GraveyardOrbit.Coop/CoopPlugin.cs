@@ -11,7 +11,7 @@ namespace GraveyardOrbit.Coop
     {
         public const string PluginGuid = "agentbox.graveyardorbit.coop";
         public const string PluginVersion = "0.1.0";
-        public const string BuildTag = "15";
+        public const string BuildTag = "16";
         public const string BuildLabel = "MP BUILD " + BuildTag;
 
         internal static CoopPlugin Instance;
@@ -29,15 +29,25 @@ namespace GraveyardOrbit.Coop
             CoopSession.Configure(Cfg);
 
             _harmony = new Harmony(PluginGuid);
-            try
+            // Apply patch classes one at a time: a single broken target must not
+            // silently disable every other hook in the mod.
+            int applied = 0, failed = 0;
+            foreach (Type type in typeof(CoopPlugin).Assembly.GetTypes())
             {
-                _harmony.PatchAll(typeof(CoopPlugin).Assembly);
-                Log.LogInfo("Harmony patches applied.");
+                if (type.GetCustomAttributes(typeof(HarmonyPatch), true).Length == 0) continue;
+                try
+                {
+                    _harmony.PatchAll(type);
+                    applied++;
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    Log.LogError($"Harmony patch {type.Name} failed (other hooks continue):\n" + ex);
+                }
             }
-            catch (Exception ex)
-            {
-                Log.LogError("Harmony PatchAll failed (mod will run without game hooks):\n" + ex);
-            }
+            Log.LogInfo($"Harmony patches applied ({applied} classes" +
+                (failed > 0 ? $", {failed} FAILED)" : ")"));
 
             Log.LogInfo($"Graveyard Orbit Co-op {PluginVersion} loaded.");
             LogSpawnAngles();

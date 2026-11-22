@@ -1,6 +1,7 @@
 using HarmonyLib;
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 
@@ -10,9 +11,24 @@ namespace GraveyardOrbit.Coop
     [HarmonyPatch(typeof(SweeperSystem), "ShowStream")]
     internal static class SweeperStreamFxPatch
     {
-        private static void Postfix(int i, Vector3 from, Vector3 to)
+        private static void Postfix(SweeperSystem __instance, int i, Vector3 from, Vector3 to)
         {
-            try { WeaponFxSync.BroadcastBeamRaw(1000 + i, from, to, CoopSession.SlotColor); }
+            try { WeaponFxSync.BroadcastDynamoStream(__instance, i, from, to); }
+            catch { }
+        }
+    }
+
+    /// <summary>Dynamo nova/blast rings (surge/rupture mods).</summary>
+    [HarmonyPatch(typeof(SweeperSystem), "PlayBlast")]
+    internal static class SweeperBlastFxPatch
+    {
+        private static void Postfix(Vector3 at, float radius, float mul)
+        {
+            try
+            {
+                WeaponFxSync.BroadcastVfx("WeaponFX/DomeNukeBlue", at,
+                    radius / 7.2f * 1.6f * Mathf.Max(0.01f, mul), 2.6f, "dynamo");
+            }
             catch { }
         }
     }
@@ -23,7 +39,7 @@ namespace GraveyardOrbit.Coop
         private static int _before;
         private static FieldInfo _orbs;
         private static Type _orbType;
-        private static FieldInfo _pos, _dir, _speed, _life;
+        private static FieldInfo _pos, _dir, _speed, _life, _surge, _partUid;
 
         private static void Prefix(SweeperSystem __instance)
         {
@@ -44,8 +60,11 @@ namespace GraveyardOrbit.Coop
                     Vector3 dir = (Vector3)_dir.GetValue(orb);
                     float speed = (float)_speed.GetValue(orb);
                     float life = (float)_life.GetValue(orb);
+                    bool surge = _surge != null && (bool)_surge.GetValue(orb);
+                    int uid = _partUid != null ? (int)_partUid.GetValue(orb) : -1;
                     WeaponFxSync.BroadcastOrb(pos, dir, speed, speed * life,
-                        "WeaponFX/ProtonMissileBlue", 0.9f, new Color(0.35f, 0.75f, 1f));
+                        "WeaponFX/ProtonMissileBlue", 0.9f * (surge ? 1.9f : 1f),
+                        new Color(0.35f, 0.75f, 1f), "dynamo", WeaponFxSync.ModsForUid(uid));
                 }
             }
             catch { }
@@ -61,6 +80,8 @@ namespace GraveyardOrbit.Coop
             _dir = AccessTools.Field(_orbType, "dir");
             _speed = AccessTools.Field(_orbType, "speed");
             _life = AccessTools.Field(_orbType, "life");
+            _surge = AccessTools.Field(_orbType, "surge");
+            _partUid = AccessTools.Field(_orbType, "partUid");
         }
 
         private static int Count(SweeperSystem s)
@@ -76,6 +97,29 @@ namespace GraveyardOrbit.Coop
         }
     }
 
+    /// <summary>
+    /// Pulse (resonator) rings: they are not projectiles, so mirror the wave
+    /// itself once it has its final style (widths set by pulse mods).
+    /// </summary>
+    [HarmonyPatch(typeof(ResonatorWave), "Step")]
+    internal static class ResonatorWaveFxPatch
+    {
+        private static readonly HashSet<ResonatorWave> _seen = new HashSet<ResonatorWave>();
+
+        private static void Prefix(ResonatorWave __instance)
+        {
+            if (CoopSession.Mode == SessionMode.Off || CoopSession.Sortie == null) return;
+            try
+            {
+                if (__instance == null || _seen.Contains(__instance)) return;
+                if (_seen.Count > 1024) _seen.Clear();
+                _seen.Add(__instance);
+                WeaponFxSync.BroadcastWave(__instance);
+            }
+            catch { }
+        }
+    }
+
     /// <summary>Chain-lightning arcs from weapons and enemy stuns.</summary>
     [HarmonyPatch(typeof(EnemyManager), "SpawnArc")]
     internal static class SpawnArcFxPatch
@@ -83,7 +127,11 @@ namespace GraveyardOrbit.Coop
         private static void Postfix(Vector3 a, Vector3 b)
         {
             if (CoopSession.Mode == SessionMode.Off) return;
-            try { WeaponFxSync.BroadcastBeamRaw(-1, a, b, new Color(0.62f, 0.32f, 1f)); }
+            try
+            {
+                WeaponFxSync.BroadcastBeamRaw(-1, a, b, new Color(0.62f, 0.32f, 1f),
+                    "SciFiBeams/BeamLaserBlue", 0.05f, weapon: "laser");
+            }
             catch { }
         }
     }
@@ -92,9 +140,17 @@ namespace GraveyardOrbit.Coop
     internal static class SpawnStraightFxPatch
     {
         private static void Prefix(Vector3 origin, Vector3 dir, float speed, float maxDist, Color color,
-            string visualFx, float visualScale)
+            string visualFx, float visualScale, string impactFx, float impactScale)
         {
-            try { WeaponFxSync.BroadcastBolt(origin, dir, speed, maxDist, color, visualFx, visualScale); }
+            try
+            {
+                string weapon = string.IsNullOrEmpty(ProjectileSystem.SpawnFamily)
+                    ? "bolt"
+                    : ProjectileSystem.SpawnFamily;
+                string mods = WeaponFxSync.ModsForUid(ProjectileSystem.SpawnPartUid);
+                WeaponFxSync.BroadcastBolt(origin, dir, speed, maxDist, color,
+                    visualFx, visualScale, weapon, mods, impactFx, impactScale);
+            }
             catch { }
         }
     }
@@ -103,9 +159,17 @@ namespace GraveyardOrbit.Coop
     internal static class SpawnProbeFxPatch
     {
         private static void Prefix(Vector3 origin, Vector3 dir, float speed, float maxDist, Color color,
-            string visualFx, float visualScale)
+            string visualFx, float visualScale, string impactFx, float impactScale)
         {
-            try { WeaponFxSync.BroadcastBolt(origin, dir, speed, maxDist, color, visualFx, visualScale); }
+            try
+            {
+                string weapon = string.IsNullOrEmpty(ProjectileSystem.SpawnFamily)
+                    ? "probe"
+                    : ProjectileSystem.SpawnFamily;
+                string mods = WeaponFxSync.ModsForUid(ProjectileSystem.SpawnPartUid);
+                WeaponFxSync.BroadcastBolt(origin, dir, speed, maxDist, color,
+                    visualFx, visualScale, weapon, mods, impactFx, impactScale);
+            }
             catch { }
         }
     }

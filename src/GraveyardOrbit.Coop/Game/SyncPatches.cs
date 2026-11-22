@@ -46,13 +46,13 @@ namespace GraveyardOrbit.Coop
         }
     }
 
-    /// <summary>Mirror the local ship's beam weapons to peers.</summary>
+    /// <summary>Mirror the local ship's beam weapons (laser/pulse/railgun) to peers.</summary>
     [HarmonyPatch(typeof(WeaponSystem), "DrawBeam")]
     internal static class DrawBeamFxPatch
     {
-        private static void Postfix(WeaponSystem __instance, int i, Vector3 to, int slot)
+        private static void Postfix(WeaponSystem __instance, int i, Vector3 to, int slot, bool showImpact)
         {
-            try { WeaponFxSync.BroadcastBeam(__instance, i, to, slot); }
+            try { WeaponFxSync.BroadcastBeam(__instance, i, to, slot, showImpact); }
             catch { }
         }
     }
