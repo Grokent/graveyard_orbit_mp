@@ -1,0 +1,115 @@
+GRAVEYARD ORBIT — CO-OP MOD (TEST BUILD 0.1.0)
+================================================
+
+WHAT THIS IS
+  A co-op mod for Graveyard Orbit: Steam lobby, friend invites, a shared
+  contract picker, and a new combined contract ("WRECKED SPACE ROCK",
+  50,499 cells). Both players need this mod installed.
+
+REQUIREMENTS
+  - Windows 10/11
+  - Graveyard Orbit installed through Steam (AppID 4654120)
+
+INSTALL (Windows)
+  1. Close Graveyard Orbit and Steam (or at least the game).
+  2. Open your Graveyard Orbit folder — the one containing GraveyardOrbit.exe:
+       Steam > right-click Graveyard Orbit > Manage > Browse local files
+  3. Copy everything from this zip into that folder.
+     Windows will merge the new BepInEx folder with the game folder.
+     Nothing in the original game is replaced: the mod only adds files:
+       winhttp.dll
+       doorstop_config.ini
+       .doorstop_version
+       changelog.txt
+       BepInEx\...
+  4. Launch the game through Steam normally. No launch options are needed
+     on Windows.
+
+USING IT
+  - Title screen: MULTIPLAYER (between NEW GAME and SETTINGS).
+  - Opening it hosts a friends-only Steam lobby and shows your online friends.
+  - INVITE OTHERS opens the Steam invite dialog; each friend row has its own
+    INVITE button. Direct invites carry a lobby connect string, so the friend
+    joins the lobby whether their game is already running or closed.
+  - Your friend accepts the Steam invite; the lobby opens for them automatically.
+  - Host picks a contract (WRECKED SPACE ROCK is first in the list) and presses
+    START. Clients automatically receive the host's save and load the game with
+    them. The client's previous save is backed up next to it as
+    graveyard_orbit_save.json.coop-backup.
+
+CURRENT TEST LIMITATIONS
+  - The host's save is the session's save; clients play the host's base and
+    ship. Progression changes on clients are local and are not synced back.
+  - Map layout, materials and seeded enemies are now shared (the session seeds
+    travel with the host save), so turrets and debris should match.
+  - START pulls clients into the scene, and the host's LAUNCH is mirrored so
+    both ships take off together.
+  - Player weapon fire (projectiles, probes and beams) is mirrored to the other
+    players as cosmetic effects. Damage is still resolved on each machine, but
+    enemy damage is host-authoritative (see below).
+  - Enemies are host-authoritative: the host simulates HP/movement and broadcasts
+    snapshots; clients apply them and forward their damage to the host.
+  - Player weapon fire now uses the weapon's own projectile visual on peers
+    (tracers are only a fallback); beams are matched in thickness.
+  - Enemy shots are mirrored to clients as cosmetic projectiles.
+  - Destroyed tiles are synchronized (reported to the host and rebroadcast);
+    tile HP/crack state is still local.
+  - Dropped loot is broadcast so every player sees the same resource motes.
+  - Player deaths are broadcast: the destroyed ship disappears for everyone
+    immediately and reappears only when that player relaunches.
+  - When the host returns to base, clients are no longer pulled home; each
+    player can keep playing or return independently. Launch is not mirrored
+    either, so the host returning/relaunching cannot close a client's upgrade
+    screen or force them out of the base.
+  - The jump/warp portal is aligned to each player's exit angle and tinted with
+    that player's slot colour.
+  - Remote ships are rebuilt from each player's synced loadout, so modifications
+    are visible to everyone.
+  - Dynamo (sweeper) orbs and streams, beam weapons and chain arcs are mirrored.
+  - Remote players appear as green dots on the SENSOR MAP.
+  - Tiles destroyed by either player are recorded in GameState and marked on
+    every minimap; when the host clears the structure, clients receive the win
+    and stop playing too.
+  - Dead lightning-rotor enemies stop firing on clients immediately.
+  - Tile/map destruction HP and loot are still resolved locally, and host
+    enemies currently target only the host's ship.
+
+THE NEW MAP
+  The merged map is a real asset at:
+    BepInEx\plugins\GraveyardOrbit.Coop\maps\wrecked_space_rock.json
+  The mod loads this file if present, so every tester gets the same map.
+  Delete the file to have the mod regenerate it from the two stock contracts.
+
+LINUX / STEAM DECK (PROTON) ONLY
+  Add this launch option for Graveyard Orbit:
+    WINEDLLOVERRIDES="winhttp=n,b" %command%
+
+LOGS / SETTINGS
+  Log:      BepInEx\LogOutput.log
+  Settings: BepInEx\config\agentbox.graveyardorbit.coop.cfg
+  Useful settings while testing:
+    [Debug] OpenLobbyOnMenu = true   (auto-open the lobby at the title screen)
+
+MULTIPLAYER BUILD NUMBER
+  This package is MP BUILD 12. The build is shown on the MULTIPLAYER menu entry
+  and in the lobby header. Both players must run the same build; if they do not,
+  the lobby shows a red BUILD MISMATCH warning and START is disabled.
+
+SEND A REPORT  If something goes wrong, close the game and double-click:
+
+      Report.bat
+
+  It collects the log, config, save seed summary and system info into a single
+  zip on your Desktop named GraveyardOrbit-Co-op-Report-<date>.zip.
+  Send that zip file to the developer - no need to hunt for individual files.
+
+  On Linux / Steam Deck, run ./Report.sh instead (its archive is written to
+  your home folder).
+
+UNINSTALL
+  Delete these from the game folder:
+    winhttp.dll, doorstop_config.ini, .doorstop_version, changelog.txt, BepInEx\
+
+NOTE
+  BepInEx injects through winhttp.dll. Some antivirus tools may flag it as a
+  false positive; that file is part of the standard BepInEx mod loader.

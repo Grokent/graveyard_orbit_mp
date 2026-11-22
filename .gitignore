@@ -1,0 +1,11 @@
+tools/dotnet/
+tools/ilspycmd/
+tools/BepInEx/
+decompiled/
+src/**/bin/
+src/**/obj/
+*.user
+
+dist/
+tools/*.zip
+.DS_Store
