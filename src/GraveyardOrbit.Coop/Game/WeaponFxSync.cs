@@ -14,23 +14,164 @@ namespace GraveyardOrbit.Coop
     ///   dynamo         -> blue stream beam + ProtonMissile orbs + DomeNuke blasts
     ///   pulse          -> expanding ResonatorWave rings
     ///   cannon / guns  -> real projectile prefab + impact FX
+    ///   chain arcs     -> batched, drawn with the game's own lightning line
+    ///
+    /// The receive path is the hot path (a firing peer must never hitch this
+    /// machine), so it is bounded per frame, binary-decoded, and every visual it
+    /// spawns comes from a pool or a cached material — no per-shot Instantiate
+    /// of prefabs and no Shader.Find.
     /// </summary>
     internal static class WeaponFxSync
     {
         private const float BeamThrottle = 0.08f;
+
+        // Chain arcs are dense and purely cosmetic: batch them instead of
+        // sending one message per hop (a chain-laser build easily emits 50-100
+        // arcs/sec, which used to arrive as individual packets).
+        private const float ArcFlushInterval = 0.05f;
+        private const int MaxArcsPerMessage = 48;
+        private const int MaxQueuedArcs = 240;
+
+        // Receive budget: cosmetic FX above this are dropped rather than
+        // hitching a frame (they are unreliable and already skippable).
+        private const int MaxFxPerFrame = 24;
+        private const int MaxQueuedFx = 160;
+        private const int MaxArcDrawPerFrame = 64;
+
+        // Outgoing cosmetic budget (messages per second, all FX kinds). The
+        // receiver has its own per-frame cap; this only stops a pathological
+        // flood (e.g. a mod that emits arcs every tick).
+        private const int FxBudgetPerSec = 240;
+
+        private const int BeamPoolMax = 32;
+
         private const string LaserBeamFx = "SciFiBeams/BeamLaserOrange";
         private const string LaserImpactFx = "SciFiBeams/BeamLaserEndOrange";
         private const string DynamoBeamFx = "SciFiBeams/BeamLaserBlue";
 
         private static readonly Dictionary<int, float> _lastBeam = new Dictionary<int, float>();
+        private static readonly Dictionary<string, GameObject> _prefabCache =
+            new Dictionary<string, GameObject>();
+        private static readonly Dictionary<string, Stack<GameObject>> _beamPool =
+            new Dictionary<string, Stack<GameObject>>();
+
         private static readonly Color LaserFallback = new Color(1f, 0.6f, 0.149f);
         private static readonly Color DynamoFallback = new Color(0.25f, 0.5f, 1f);
+        private static readonly Color ArcFallback = new Color(0.62f, 0.32f, 1f);
 
         private static FieldInfo _beams, _beamsX, _streams;
         private static FieldInfo _wCenter, _wMaxR, _wSpeed, _wCore, _wHalo, _wTrail, _wHex, _wColor;
         private static FieldInfo _wCone, _wConeBase, _wConeHalf;
         private static int _sendLogs;
         private static int _recvLogs;
+
+        private static Shader _lineShader;
+        private static Material _sharedLine;
+
+        private static EnemyManager _localEnemies;
+
+        // Set while remote arcs are being replayed: our SpawnArc patch must not
+        // queue those again or the arc stream would echo across the session.
+        private static bool _replayingArcs;
+
+        // outgoing chain arcs (flat x1,y1,z1,x2,y2,z2 triples)
+        private static readonly List<float> _arcs = new List<float>(256);
+        private static float _arcFlushT;
+
+        // incoming FX waiting for the per-frame budget
+        private static readonly Queue<NetMessage> _incoming = new Queue<NetMessage>();
+        private static int _arcDrawBudget;
+
+        // stats + budget
+        private static int _sent, _recv, _dropped;
+        private static float _statT;
+        private static float _budgetT;
+        private static int _budgetUsed;
+
+        // ------------------------------------------------------------------ tick
+
+        /// <summary>Drop queued FX between sorties (scene teardown / re-entry).</summary>
+        public static void Reset()
+        {
+            _arcs.Clear();
+            _incoming.Clear();
+            _arcDrawBudget = 0;
+            _arcFlushT = 0f;
+            _replayingArcs = false;
+            _localEnemies = null;
+        }
+
+        /// <summary>Called once per frame from <see cref="CoopSession.Tick"/>.</summary>
+        public static void Tick()
+        {
+            _arcDrawBudget = MaxArcDrawPerFrame;
+            DrainIncoming();
+            FlushArcs();
+            LogStats();
+        }
+
+        private static void DrainIncoming()
+        {
+            if (_incoming.Count == 0) return;
+            int n = _incoming.Count < MaxFxPerFrame ? _incoming.Count : MaxFxPerFrame;
+            for (int i = 0; i < n; i++)
+            {
+                Play(_incoming.Dequeue());
+            }
+        }
+
+        /// <summary>Queue a remote FX message instead of playing it inline in Poll.</summary>
+        public static void EnqueueRemote(NetMessage msg)
+        {
+            if (msg == null) return;
+            _recv++;
+            if (_incoming.Count >= MaxQueuedFx)
+            {
+                _incoming.Dequeue();
+                _dropped++;
+            }
+            _incoming.Enqueue(msg);
+        }
+
+        private static void LogStats()
+        {
+            float now = Time.unscaledTime;
+            if (now - _statT < 10f) return;
+            if (_sent > 0 || _recv > 0 || _dropped > 0)
+            {
+                CoopPlugin.Log.LogInfo($"[fx] last 10s: sent={_sent} recv={_recv} dropped={_dropped}");
+            }
+            _sent = 0;
+            _recv = 0;
+            _dropped = 0;
+            _statT = now;
+        }
+
+        private static bool Budget()
+        {
+            float now = Time.unscaledTime;
+            if (now - _budgetT >= 1f)
+            {
+                _budgetT = now;
+                _budgetUsed = 0;
+            }
+            if (_budgetUsed >= FxBudgetPerSec) return false;
+            _budgetUsed++;
+            return true;
+        }
+
+        private static bool Send(NetMessage msg, bool cosmetic)
+        {
+            if (CoopSession.Mode == SessionMode.Off || CoopSession.Transport == null) return false;
+            if (cosmetic && !Budget())
+            {
+                _dropped++;
+                return false;
+            }
+            CoopSession.Transport.Broadcast(Protocol.Encode(msg), Delivery.Unreliable);
+            _sent++;
+            return true;
+        }
 
         // ---------------------------------------------------------------- send
 
@@ -73,7 +214,7 @@ namespace GraveyardOrbit.Coop
                 CoopPlugin.Log.LogInfo(
                     $"[fx] sending {msg.weapon} beam w={msg.w:0.000} boom={showImpact} mods={msg.mods ?? "-"}");
             }
-            CoopSession.Transport.Broadcast(Protocol.Encode(msg), Delivery.Unreliable);
+            Send(msg, cosmetic: true);
         }
 
         /// <summary>Generic beam/arc between two world points (throttled by key).</summary>
@@ -103,7 +244,48 @@ namespace GraveyardOrbit.Coop
                 weapon = weapon,
                 mods = mods
             };
-            CoopSession.Transport.Broadcast(Protocol.Encode(msg), Delivery.Unreliable);
+            Send(msg, cosmetic: true);
+        }
+
+        /// <summary>
+        /// Chain-lightning arc. Queued and flushed as one batched message every
+        /// <see cref="ArcFlushInterval"/>; the receiver draws it with the game's
+        /// own lightning line, exactly like the shooter sees it.
+        /// </summary>
+        public static void QueueArc(Vector3 a, Vector3 b)
+        {
+            if (_replayingArcs) return;
+            if (CoopSession.Mode == SessionMode.Off || CoopSession.Transport == null) return;
+            if (CoopSession.Sortie == null) return;
+            if (_arcs.Count >= MaxQueuedArcs * 6) return;
+
+            _arcs.Add(a.x); _arcs.Add(a.y); _arcs.Add(a.z);
+            _arcs.Add(b.x); _arcs.Add(b.y); _arcs.Add(b.z);
+        }
+
+        private static void FlushArcs()
+        {
+            if (_arcs.Count == 0) return;
+            float now = Time.unscaledTime;
+            if (now - _arcFlushT < ArcFlushInterval) return;
+            _arcFlushT = now;
+
+            int total = _arcs.Count / 6;
+            int offset = 0;
+            while (offset < total)
+            {
+                int count = Mathf.Min(MaxArcsPerMessage, total - offset);
+                var batch = new float[count * 6];
+                _arcs.CopyTo(offset * 6, batch, 0, count * 6);
+                Send(new NetMessage
+                {
+                    kind = MessageKind.FxShot.ToString(),
+                    fx = "arcs",
+                    arcs = batch
+                }, cosmetic: true);
+                offset += count;
+            }
+            _arcs.Clear();
         }
 
         /// <summary>Dynamo (sweeper) stream: blue beam with the shooter's width/colour.</summary>
@@ -150,7 +332,7 @@ namespace GraveyardOrbit.Coop
                 CoopPlugin.Log.LogInfo(
                     $"[fx] sending {weapon ?? "bolt"} ({visualFx ?? "line"}) from ({origin.x:0.0},{origin.z:0.0}) mods={mods ?? "-"}");
             }
-            CoopSession.Transport.Broadcast(Protocol.Encode(msg), Delivery.Unreliable);
+            Send(msg, cosmetic: true);
         }
 
         /// <summary>Dynamo orb with the real prefab + surge scale.</summary>
@@ -180,7 +362,8 @@ namespace GraveyardOrbit.Coop
                 hit = Mathf.Max(0.1f, hitDist),
                 cr = 1f, cg = 0.35f, cb = 0.25f
             };
-            CoopSession.Transport.Broadcast(Protocol.Encode(msg), Delivery.Unreliable);
+            // Enemy shots carry damage: never budget-drop them.
+            Send(msg, cosmetic: false);
         }
 
         /// <summary>Pulse/resonator wave: expanding ring with the shooter's style.</summary>
@@ -237,7 +420,7 @@ namespace GraveyardOrbit.Coop
                 CoopPlugin.Log.LogInfo(
                     $"[fx] sending pulse wave r={maxR:0.0} speed={speed:0.0} core={coreW:0.00} halo={haloW:0.00}");
             }
-            CoopSession.Transport.Broadcast(Protocol.Encode(msg), Delivery.Unreliable);
+            Send(msg, cosmetic: true);
         }
 
         /// <summary>One-shot static VFX (dynamo nova/blast, etc.).</summary>
@@ -258,12 +441,12 @@ namespace GraveyardOrbit.Coop
                 weapon = weapon,
                 mods = mods
             };
-            CoopSession.Transport.Broadcast(Protocol.Encode(msg), Delivery.Unreliable);
+            Send(msg, cosmetic: true);
         }
 
         // -------------------------------------------------------------- receive
 
-        public static void Play(NetMessage msg)
+        private static void Play(NetMessage msg)
         {
             try
             {
@@ -273,7 +456,7 @@ namespace GraveyardOrbit.Coop
                 var origin = new Vector3(msg.ox, msg.oy, msg.oz);
                 var dir = new Vector3(msg.dx, msg.dy, msg.dz);
                 var color = new Color(msg.cr, msg.cg, msg.cb, 1f);
-                bool directional = msg.fx != "beam" && msg.fx != "wave" && msg.fx != "vfx";
+                bool directional = msg.fx != "beam" && msg.fx != "wave" && msg.fx != "vfx" && msg.fx != "arcs";
                 if (directional && dir.sqrMagnitude < 1e-6f) return;
 
                 if (_recvLogs < 8)
@@ -303,6 +486,10 @@ namespace GraveyardOrbit.Coop
                         Mathf.Max(1f, msg.dist), msg.dmg, Mathf.Max(0.01f, msg.fxScale),
                         Mathf.Max(0.1f, msg.hit));
                 }
+                else if (msg.fx == "arcs")
+                {
+                    PlayArcs(msg.arcs);
+                }
                 else if (!string.IsNullOrEmpty(msg.fxName))
                 {
                     PlayVisual(origin, dir.normalized, Mathf.Max(1f, msg.speed), Mathf.Max(1f, msg.dist),
@@ -319,6 +506,78 @@ namespace GraveyardOrbit.Coop
             }
         }
 
+        // -------------------------------------------------------------- arcs
+
+        /// <summary>
+        /// Draw batched chain arcs with the game's own lightning: the shooter's
+        /// machine draws them via EnemyManager.SpawnArc, so peers use the exact
+        /// same call (one LineRenderer, shared material) instead of
+        /// instantiating a beam prefab per hop.
+        /// </summary>
+        private static void PlayArcs(float[] arcs)
+        {
+            if (arcs == null || arcs.Length < 6) return;
+            EnemyManager mgr = LocalEnemies();
+            int n = arcs.Length / 6;
+            _replayingArcs = true;
+            try
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    if (_arcDrawBudget <= 0) break;
+                    _arcDrawBudget--;
+
+                    int k = i * 6;
+                    var a = new Vector3(arcs[k], arcs[k + 1], arcs[k + 2]);
+                    var b = new Vector3(arcs[k + 3], arcs[k + 4], arcs[k + 5]);
+                    bool drawn = false;
+                    if (mgr != null)
+                    {
+                        try
+                        {
+                            mgr.SpawnArc(a, b, 0.22f, 1f);
+                            drawn = true;
+                        }
+                        catch { }
+                    }
+                    if (!drawn) DrawArcLine(a, b);
+                }
+            }
+            finally
+            {
+                _replayingArcs = false;
+            }
+        }
+
+        private static void DrawArcLine(Vector3 a, Vector3 b)
+        {
+            var go = new GameObject("CoopRemoteArc");
+            var lr = go.AddComponent<LineRenderer>();
+            lr.sharedMaterial = SharedLineMaterial();
+            lr.useWorldSpace = true;
+            lr.positionCount = 2;
+            lr.startWidth = 0.05f;
+            lr.endWidth = 0.02f;
+            lr.numCapVertices = 0;
+            lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            lr.receiveShadows = false;
+            lr.startColor = ArcFallback;
+            lr.endColor = ArcFallback;
+            lr.SetPosition(0, a);
+            lr.SetPosition(1, b);
+            UnityEngine.Object.Destroy(go, 0.22f);
+        }
+
+        private static EnemyManager LocalEnemies()
+        {
+            if (_localEnemies != null) return _localEnemies;
+            try { _localEnemies = UnityEngine.Object.FindAnyObjectByType<EnemyManager>(); }
+            catch { }
+            return _localEnemies;
+        }
+
+        // -------------------------------------------------------------- visuals
+
         private static void PlayVisual(Vector3 origin, Vector3 dir, float speed, float dist,
             string fx, float scale, string impactFx, float impactScale)
         {
@@ -331,10 +590,15 @@ namespace GraveyardOrbit.Coop
             }
 
             go.transform.localScale = Vector3.one * Mathf.Max(0.1f, scale);
-            // VfxSpawner pools prefabs, so a stale mover can still be attached.
-            var stale = go.GetComponent<RemoteVisual>();
-            if (stale != null) stale.enabled = false;
-            var mover = go.AddComponent<RemoteVisual>();
+            // VfxSpawner pools prefabs, so reuse one mover rather than adding a
+            // fresh RemoteVisual component on every shot.
+            RemoteVisual[] movers = go.GetComponents<RemoteVisual>();
+            RemoteVisual mover = movers.Length > 0 ? movers[0] : go.AddComponent<RemoteVisual>();
+            for (int i = 1; i < movers.Length; i++)
+            {
+                if (movers[i] != mover) movers[i].enabled = false;
+            }
+            mover.enabled = true;
             mover.Setup(origin, dir, speed, dist, impactFx, impactScale);
         }
 
@@ -350,28 +614,7 @@ namespace GraveyardOrbit.Coop
         private static void PlayBeam(Vector3 from, Vector3 to, Color color, float width,
             string prefab, bool impact, string weapon)
         {
-            GameObject go = null;
-            LineRenderer lr = null;
-            GameObject source = null;
-            if (!string.IsNullOrEmpty(prefab))
-            {
-                try { source = Resources.Load<GameObject>(prefab); } catch { }
-            }
-
-            if (source != null)
-            {
-                go = UnityEngine.Object.Instantiate(source);
-                go.name = "CoopRemoteBeam";
-                try { VfxSpawner.StripForeignAudio(go); } catch { }
-                lr = go.GetComponent<LineRenderer>();
-                if (lr == null) lr = go.AddComponent<LineRenderer>();
-            }
-            else
-            {
-                go = new GameObject("CoopRemoteBeam");
-                lr = go.AddComponent<LineRenderer>();
-                lr.sharedMaterial = LineMaterial(color);
-            }
+            GameObject go = RentBeam(prefab, out LineRenderer lr, out Material mat, out string key);
 
             float w = width > 0f ? width : 0.05f;
             go.transform.position = from;
@@ -388,21 +631,17 @@ namespace GraveyardOrbit.Coop
             lr.SetPosition(0, from);
             lr.SetPosition(1, to);
 
-            // The local game tints the beam material (per mount), not the
-            // shared prefab material, so clone it here too.
-            Material mat = null;
-            try
+            if (mat != null)
             {
-                mat = lr.material;
-                if (mat != null)
+                try
                 {
                     if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", color);
                     if (mat.HasProperty("_Color")) mat.SetColor("_Color", color);
                     if (mat.HasProperty("_TintColor")) mat.SetColor("_TintColor", color);
                     mat.color = color;
                 }
+                catch { }
             }
-            catch { }
             try { WeaponSystem.TintFxRenderers(go, color); } catch { }
 
             if (impact)
@@ -428,8 +667,88 @@ namespace GraveyardOrbit.Coop
                 catch { }
             }
 
-            var fade = go.AddComponent<RemoteBeamFade>();
-            fade.Setup(0.16f, mat);
+            RemoteBeamFade fade = go.GetComponent<RemoteBeamFade>();
+            if (fade == null) fade = go.AddComponent<RemoteBeamFade>();
+            fade.Setup(0.16f, key);
+        }
+
+        private static GameObject RentBeam(string prefab, out LineRenderer lr, out Material mat, out string key)
+        {
+            key = string.IsNullOrEmpty(prefab) ? "line" : prefab;
+
+            if (_beamPool.TryGetValue(key, out Stack<GameObject> stack))
+            {
+                while (stack.Count > 0)
+                {
+                    GameObject pooled = stack.Pop();
+                    if (pooled == null) continue;
+                    RemoteBeam state = pooled.GetComponent<RemoteBeam>();
+                    LineRenderer line = pooled.GetComponent<LineRenderer>();
+                    if (state != null && state.Mat != null && line != null)
+                    {
+                        pooled.SetActive(true);
+                        lr = line;
+                        mat = state.Mat;
+                        return pooled;
+                    }
+                    UnityEngine.Object.Destroy(pooled);
+                }
+            }
+
+            GameObject inst;
+            GameObject source = LoadPrefab(prefab);
+            if (source != null)
+            {
+                inst = UnityEngine.Object.Instantiate(source);
+                inst.name = "CoopRemoteBeam";
+                try { VfxSpawner.StripForeignAudio(inst); } catch { }
+                lr = inst.GetComponent<LineRenderer>();
+                if (lr == null) lr = inst.AddComponent<LineRenderer>();
+                mat = lr.material;   // one clone, kept for this object's life
+            }
+            else
+            {
+                inst = new GameObject("CoopRemoteBeam");
+                lr = inst.AddComponent<LineRenderer>();
+                // Per-object material: PlayBeam tints it for this beam, so it
+                // must never be the shared line material.
+                mat = LineMaterial(Color.white);
+                lr.sharedMaterial = mat;
+            }
+
+            var state2 = inst.AddComponent<RemoteBeam>();
+            state2.Mat = mat;
+            state2.Key = key;
+            return inst;
+        }
+
+        internal static void ReturnBeam(GameObject go, string key)
+        {
+            if (go == null) return;
+            go.SetActive(false);
+            if (string.IsNullOrEmpty(key)) key = "line";
+            if (!_beamPool.TryGetValue(key, out Stack<GameObject> stack))
+            {
+                stack = new Stack<GameObject>();
+                _beamPool[key] = stack;
+            }
+            if (stack.Count >= BeamPoolMax)
+            {
+                UnityEngine.Object.Destroy(go);
+                return;
+            }
+            stack.Push(go);
+        }
+
+        private static GameObject LoadPrefab(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return null;
+            if (_prefabCache.TryGetValue(id, out GameObject cached)) return cached;
+
+            GameObject go = null;
+            try { go = Resources.Load<GameObject>(id); } catch { }
+            _prefabCache[id] = go;
+            return go;
         }
 
         private static void PlayWave(Vector3 center, float maxR, float speed, Color color,
@@ -450,8 +769,7 @@ namespace GraveyardOrbit.Coop
         {
             var go = new GameObject("CoopRemoteBolt");
             var lr = go.AddComponent<LineRenderer>();
-            Material mat = LineMaterial(color);
-            lr.sharedMaterial = mat;
+            lr.sharedMaterial = SharedLineMaterial();
             lr.useWorldSpace = true;
             lr.positionCount = 2;
             lr.startWidth = 0.05f;
@@ -463,7 +781,7 @@ namespace GraveyardOrbit.Coop
             lr.endColor = new Color(color.r, color.g, color.b, 0.25f);
 
             var bolt = go.AddComponent<RemoteBolt>();
-            bolt.Setup(origin, dir, speed, dist, mat);
+            bolt.Setup(origin, dir, speed, dist);
         }
 
         private static void PlayEnemyShot(Vector3 origin, Vector3 dir, float speed, float dist,
@@ -481,7 +799,7 @@ namespace GraveyardOrbit.Coop
             bool visual = false;
             try
             {
-                GameObject prefab = Resources.Load<GameObject>("WeaponFX/LavaMissile");
+                GameObject prefab = LoadPrefab("WeaponFX/LavaMissile");
                 if (prefab != null)
                 {
                     EnemyManager.FxBody(prefab, go.transform, Mathf.Max(0.01f, scale) * 6f);
@@ -496,8 +814,7 @@ namespace GraveyardOrbit.Coop
             if (!visual)
             {
                 var lr = go.AddComponent<LineRenderer>();
-                Material mat = LineMaterial(new Color(1f, 0.35f, 0.25f));
-                lr.sharedMaterial = mat;
+                lr.sharedMaterial = SharedLineMaterial();
                 lr.useWorldSpace = true;
                 lr.positionCount = 2;
                 lr.startWidth = Mathf.Max(0.1f, hitDist * 0.4f);
@@ -514,8 +831,26 @@ namespace GraveyardOrbit.Coop
 
         // -------------------------------------------------------------- helpers
 
+        /// <summary>Shared white line material: tint comes from vertex colours.</summary>
+        public static Material SharedLineMaterial()
+        {
+            if (_sharedLine == null) _sharedLine = LineMaterial(Color.white);
+            return _sharedLine;
+        }
+
         public static Material LineMaterial(Color color)
         {
+            Shader shader = LineShader();
+            var mat = new Material(shader);
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", color);
+            if (mat.HasProperty("_Color")) mat.SetColor("_Color", color);
+            mat.color = color;
+            return mat;
+        }
+
+        private static Shader LineShader()
+        {
+            if (_lineShader != null) return _lineShader;
             Shader shader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
             if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");
             if (shader == null) shader = Shader.Find("Sprites/Default");
@@ -524,12 +859,8 @@ namespace GraveyardOrbit.Coop
                 CoopPlugin.Log.LogWarning("[fx] no line shader found");
                 shader = Shader.Find("Hidden/Internal-Colored");
             }
-
-            var mat = new Material(shader);
-            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", color);
-            if (mat.HasProperty("_Color")) mat.SetColor("_Color", color);
-            mat.color = color;
-            return mat;
+            _lineShader = shader;
+            return shader;
         }
 
         private static LineRenderer BeamRenderer(WeaponSystem ws, int i, int slot)
@@ -663,6 +994,19 @@ namespace GraveyardOrbit.Coop
         }
     }
 
+    /// <summary>Pooled remote beam bookkeeping (material + pool key).</summary>
+    internal sealed class RemoteBeam : MonoBehaviour
+    {
+        public string Key;
+        public Material Mat;
+
+        private void OnDestroy()
+        {
+            // Mat is always a per-object instance (prefab clone or LineMaterial).
+            if (Mat != null) Destroy(Mat);
+        }
+    }
+
     internal sealed class RemoteVisual : MonoBehaviour
     {
         private Vector3 _origin;
@@ -680,6 +1024,7 @@ namespace GraveyardOrbit.Coop
             _dir = dir;
             _speed = speed;
             _dist = dist;
+            _t = 0f;
             _impactFx = impactFx;
             _impactScale = Mathf.Max(0.01f, impactScale);
         }
@@ -714,20 +1059,14 @@ namespace GraveyardOrbit.Coop
         private float _speed;
         private float _dist;
         private float _t;
-        private Material _mat;
 
-        public void Setup(Vector3 origin, Vector3 dir, float speed, float dist, Material mat)
+        public void Setup(Vector3 origin, Vector3 dir, float speed, float dist)
         {
             _origin = origin;
             _dir = dir;
             _speed = speed;
             _dist = dist;
-            _mat = mat;
-        }
-
-        private void OnDestroy()
-        {
-            if (_mat != null) Destroy(_mat);
+            _t = 0f;
         }
 
         private void Update()
@@ -773,9 +1112,6 @@ namespace GraveyardOrbit.Coop
         private LineRenderer _core;
         private LineRenderer _halo;
         private LineRenderer _trail;
-        private Material _mCore;
-        private Material _mHalo;
-        private Material _mTrail;
 
         public void Setup(Vector3 center, float maxR, float speed, Color color,
             float coreW, float haloW, float trailW, float a0, float a1, float delay)
@@ -793,19 +1129,18 @@ namespace GraveyardOrbit.Coop
             transform.position = Vector3.zero;
 
             bool full = _a1 - _a0 >= Mathf.PI * 2f - 0.01f;
-            _core = MakeRing("RemoteWaveCore", coreW, full, out _mCore);
-            _halo = MakeRing("RemoteWaveHalo", haloW, full, out _mHalo);
-            if (trailW > 0f) _trail = MakeRing("RemoteWaveTrail", trailW, full, out _mTrail);
+            _core = MakeRing("RemoteWaveCore", coreW, full);
+            _halo = MakeRing("RemoteWaveHalo", haloW, full);
+            if (trailW > 0f) _trail = MakeRing("RemoteWaveTrail", trailW, full);
             Draw(0f);
         }
 
-        private LineRenderer MakeRing(string name, float width, bool loop, out Material mat)
+        private LineRenderer MakeRing(string name, float width, bool loop)
         {
             var go = new GameObject(name);
             go.transform.SetParent(transform, worldPositionStays: false);
             var lr = go.AddComponent<LineRenderer>();
-            mat = WeaponFxSync.LineMaterial(Color.white);
-            lr.sharedMaterial = mat;
+            lr.sharedMaterial = WeaponFxSync.SharedLineMaterial();
             lr.useWorldSpace = true;
             lr.loop = loop;
             lr.positionCount = loop ? Seg : Seg + 1;
@@ -872,13 +1207,6 @@ namespace GraveyardOrbit.Coop
             lr.startColor = c;
             lr.endColor = c;
         }
-
-        private void OnDestroy()
-        {
-            if (_mCore != null) Destroy(_mCore);
-            if (_mHalo != null) Destroy(_mHalo);
-            if (_mTrail != null) Destroy(_mTrail);
-        }
     }
 
     /// <summary>
@@ -905,12 +1233,8 @@ namespace GraveyardOrbit.Coop
             _dist = dist;
             _dmg = dmg;
             _hit = hit;
+            _t = 0f;
             _line = GetComponent<LineRenderer>();
-        }
-
-        private void OnDestroy()
-        {
-            if (_line != null && _line.sharedMaterial != null) Destroy(_line.sharedMaterial);
         }
 
         private void Update()
@@ -949,28 +1273,22 @@ namespace GraveyardOrbit.Coop
 
     internal sealed class RemoteBeamFade : MonoBehaviour
     {
-        private float _life;
+        private float _life = 0.16f;
         private float _t;
         private LineRenderer _line;
-        private Color _a;
-        private Color _b;
-        private Material _mat;
+        private string _key;
 
-        public void Setup(float life, Material mat)
+        public void Setup(float life, string key)
         {
-            _life = life;
-            _mat = mat;
+            _life = Mathf.Max(0.01f, life);
+            _t = 0f;
+            _key = key;
             _line = GetComponent<LineRenderer>();
             if (_line != null)
             {
-                _a = _line.startColor;
-                _b = _line.endColor;
+                _line.startColor = Color.white;
+                _line.endColor = Color.white;
             }
-        }
-
-        private void OnDestroy()
-        {
-            if (_mat != null) Destroy(_mat);
         }
 
         private void Update()
@@ -979,10 +1297,10 @@ namespace GraveyardOrbit.Coop
             float k = Mathf.Clamp01(_t / _life);
             if (_line != null)
             {
-                _line.startColor = new Color(_a.r, _a.g, _a.b, 1f - k);
-                _line.endColor = new Color(_b.r, _b.g, _b.b, 1f - k);
+                _line.startColor = new Color(1f, 1f, 1f, 1f - k);
+                _line.endColor = new Color(1f, 1f, 1f, 1f - k);
             }
-            if (k >= 1f) Destroy(gameObject);
+            if (k >= 1f) WeaponFxSync.ReturnBeam(gameObject, _key);
         }
     }
 }

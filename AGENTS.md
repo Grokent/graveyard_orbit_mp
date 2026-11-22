@@ -86,6 +86,13 @@ src/GraveyardOrbit.Coop/
   while snapshots are fresh (`EnemySync.HostAuthority`, 3 s timeout). Without
   fresh snapshots (e.g. host in base) clients fall back to fully local enemy
   damage.
+- **Kills are mirrored explicitly.** A `KillEnemy` prefix broadcasts
+  `EnemyKilled` (reliable, cell-keyed) so peers run the native kill — death FX,
+  destroyed visuals, `GameState.RecordDestroyed` — instead of only hiding the
+  enemy. Peers suppress `OnBehaviorLoot` during the replay (the killer already
+  broadcast the loot spawn) and remove the enemy from `_dormant` if they had
+  not revealed it yet. Snapshot omission stays as a fallback: an enemy that was
+  live and then vanishes is killed, never-seen ones are just parked/hidden.
 - **Dormant-enemy reveals follow destroyed tiles:** remote tile applies call
   `EnemyManager.OnTileDestroyed`, otherwise host/receiver enemy sets diverge.
 - **Tiles:** both sides simulate local damage; every destruction is reported.

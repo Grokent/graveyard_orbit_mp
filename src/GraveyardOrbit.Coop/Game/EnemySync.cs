@@ -23,6 +23,7 @@ namespace GraveyardOrbit.Coop
         private static float _lastSnapshot;
         private static float _lastApply;
         private static bool _gotFirst;
+        private static bool _applyingKill;
         private static readonly Dictionary<long, float> _lastSeen = new Dictionary<long, float>();
         private static readonly HashSet<long> _hidden = new HashSet<long>();
 
@@ -30,6 +31,7 @@ namespace GraveyardOrbit.Coop
         private static Type _enemyType;
         private static FieldInfo _cellF, _worldF, _hpF, _maxHpF, _visF, _ringF, _barF, _barFracF, _rotorF;
         private static FieldInfo _hexF;
+        private static FieldInfo _dormantF, _dormantCellF;
         private static MethodInfo _tickBars, _killEnemy;
         private static bool _refsTried;
         private static bool _refsOk;
@@ -48,6 +50,7 @@ namespace GraveyardOrbit.Coop
             _gotFirst = false;
             _lastSnapshot = 0f;
             _lastApply = 0f;
+            _applyingKill = false;
             _lastSeen.Clear();
             _hidden.Clear();
         }
@@ -157,8 +160,21 @@ namespace GraveyardOrbit.Coop
                 {
                     if (present.Contains(kv.Key)) continue;
                     if (_lastSeen.TryGetValue(kv.Key, out float seen) && now - seen <= StaleAfter) continue;
-                    Hide(kv.Value);
-                    _hidden.Add(kv.Key);
+
+                    if (_lastSeen.Remove(kv.Key))
+                    {
+                        // It was live in an earlier snapshot and the host has since
+                        // dropped it: that is a kill. Remove it properly (death FX,
+                        // destroy visuals, record the cell) instead of only hiding
+                        // it, so the kill registers here too.
+                        ApplyKillCell(kv.Key);
+                    }
+                    else
+                    {
+                        // Never seen live: dormant / not revealed on the host yet.
+                        Hide(kv.Value);
+                        _hidden.Add(kv.Key);
+                    }
                 }
             }
             _gotFirst = true;
@@ -196,13 +212,122 @@ namespace GraveyardOrbit.Coop
             }
         }
 
+        // ------------------------------------------------------------ kills
+
+        /// <summary>
+        /// Prefix on EnemyManager.KillEnemy: tell peers this enemy is gone. Every
+        /// kill source (weapons, explosions, anomaly effects, local sims) funnels
+        /// through KillEnemy, so one hook covers them all.
+        /// </summary>
+        internal static void OnLocalKill(EnemyManager mgr, int idx)
+        {
+            if (_applyingKill) return;
+            if (CoopSession.Mode == SessionMode.Off || CoopSession.Transport == null) return;
+            if (CoopSession.Sortie == null || mgr == null) return;
+
+            EnsureRefs();
+            if (!_refsOk) return;
+            IList list = Active(mgr);
+            if (list == null || idx < 0 || idx >= list.Count) return;
+
+            object e = list[idx];
+            if (e == null) return;
+            var cell = (Vector2Int)_cellF.GetValue(e);
+
+            var msg = new NetMessage
+            {
+                kind = MessageKind.EnemyKilled.ToString(),
+                dq = cell.x,
+                dr = cell.y
+            };
+            CoopSession.Transport.Broadcast(Protocol.Encode(msg), Delivery.Reliable);
+            CoopPlugin.Log.LogDebug($"[enemy] kill broadcast at ({cell.x},{cell.y})");
+        }
+
+        /// <summary>
+        /// Remove an enemy a peer killed. Replays the native kill (explosion /
+        /// chain / void FX, destroyed-cell record) but suppresses the loot spawn:
+        /// the peer that landed the kill already broadcast that separately.
+        /// </summary>
+        internal static void ApplyKill(int q, int r)
+        {
+            if (CoopSession.Sortie == null) return;
+            EnemyManager mgr = Manager();
+            if (mgr == null) return;
+
+            EnsureRefs();
+            if (!_refsOk) return;
+
+            // If this peer has not revealed the enemy yet, drop it from the
+            // dormant list so a later tile reveal cannot bring it back.
+            RemoveDormant(mgr, q, r);
+
+            IList list = Active(mgr);
+            if (list == null) return;
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                object e = list[i];
+                if (e == null) continue;
+                var cell = (Vector2Int)_cellF.GetValue(e);
+                if (cell.x != q || cell.y != r) continue;
+
+                long key = Key(q, r);
+                _applyingKill = true;
+                Action<Vector3, Dictionary<string, int>> loot = mgr.OnBehaviorLoot;
+                mgr.OnBehaviorLoot = null;
+                try
+                {
+                    _killEnemy?.Invoke(mgr, new object[] { i });
+                }
+                catch (Exception ex)
+                {
+                    CoopPlugin.Log.LogWarning("[enemy] remote kill failed: " + ex.Message);
+                }
+                finally
+                {
+                    mgr.OnBehaviorLoot = loot;
+                    _applyingKill = false;
+                }
+
+                _hidden.Remove(key);
+                _lastSeen.Remove(key);
+                CoopPlugin.Log.LogDebug($"[enemy] remote kill applied at ({q},{r})");
+                return;
+            }
+            // Not found: already dead here, or this peer never had it. The
+            // snapshot fallback in Apply() covers the latter case.
+        }
+
+        private static void ApplyKillCell(long key)
+        {
+            ApplyKill((int)(key >> 32), (int)(key & 0xFFFFFFFFL));
+        }
+
+        private static void RemoveDormant(EnemyManager mgr, int q, int r)
+        {
+            try
+            {
+                if (_dormantF == null || _dormantCellF == null) return;
+                var list = _dormantF.GetValue(mgr) as IList;
+                if (list == null || list.Count == 0) return;
+                for (int i = list.Count - 1; i >= 0; i--)
+                {
+                    object item = list[i];
+                    if (item == null) continue;
+                    if (!(_dormantCellF.GetValue(item) is Vector2Int cell)) continue;
+                    if (cell.x == q && cell.y == r) list.RemoveAt(i);
+                }
+            }
+            catch { }
+        }
+
         // ------------------------------------------------------------ client damage
 
         /// <summary>Called from the DamageTarget prefix. Returns true when handled.</summary>
-        internal static bool InterceptClientDamage(int kind, int idx, int dmg)
+        internal static bool InterceptClientDamage(EnemyManager mgr, int kind, int idx, int dmg)
         {
             if (!HostAuthority || kind != 1 || dmg <= 0) return false;
-            EnemyManager mgr = Manager();
             if (mgr == null) return false;
             IList list = Active(mgr);
             if (list == null || idx < 0 || idx >= list.Count) return false;
@@ -247,6 +372,19 @@ namespace GraveyardOrbit.Coop
                 CoopPlugin.Log.LogError("[enemy] _active not found - enemy sync disabled");
                 return;
             }
+
+            // Dormant (not yet revealed) enemies: a kill must remove the entry or
+            // the peer would reveal it later as alive.
+            _dormantF = AccessTools.Field(typeof(EnemyManager), "_dormant");
+            try
+            {
+                Type dormantList = _dormantF?.FieldType;
+                Type tuple = dormantList != null && dormantList.IsGenericType
+                    ? dormantList.GetGenericArguments()[0]
+                    : null;
+                _dormantCellF = tuple != null ? AccessTools.Field(tuple, "Item1") : null;
+            }
+            catch { }
 
             _enemyType = _activeField.FieldType.GetGenericArguments()[0];
             _cellF = AccessTools.Field(_enemyType, "cell");

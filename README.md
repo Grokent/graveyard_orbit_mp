@@ -22,7 +22,7 @@ You only need the release zip — no compiler, no setup, no separate Linux build
 2. In Steam, right-click **Graveyard Orbit** → **Manage** → **Browse local files**.
    That opens the game folder (the one containing `GraveyardOrbit.exe`).
 3. Download the release zip:
-   **[GraveyardOrbit-Co-op-0.1.0-MP16.zip](https://github.com/Grokent/graveyard_orbit_mp/releases/latest/download/GraveyardOrbit-Co-op-0.1.0-MP16.zip)**
+   **[GraveyardOrbit-Co-op-0.1.0-MP18.zip](https://github.com/Grokent/graveyard_orbit_mp/releases/latest/download/GraveyardOrbit-Co-op-0.1.0-MP18.zip)**
 4. Extract **everything** from the zip into the game folder that opened in step 2.
    It only adds files (`winhttp.dll`, `doorstop_config.ini`,
    `.doorstop_version`, `changelog.txt`, `BepInEx/`, `Report.*`); nothing in the

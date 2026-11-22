@@ -11,7 +11,7 @@ namespace GraveyardOrbit.Coop
     {
         public const string PluginGuid = "agentbox.graveyardorbit.coop";
         public const string PluginVersion = "0.1.0";
-        public const string BuildTag = "16";
+        public const string BuildTag = "18";
         public const string BuildLabel = "MP BUILD " + BuildTag;
 
         internal static CoopPlugin Instance;

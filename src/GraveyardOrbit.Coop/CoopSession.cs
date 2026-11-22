@@ -404,6 +404,7 @@ namespace GraveyardOrbit.Coop
             DestroyAllViews();
             Sortie = null;
             TileSync.Reset();
+            WeaponFxSync.Reset();
             SelectedContractId = null;
             ActiveLobbyId = 0;
             _saveParts.Clear();
@@ -518,6 +519,10 @@ namespace GraveyardOrbit.Coop
 
             try { Transport?.Poll(); }
             catch (Exception ex) { CoopPlugin.Log.LogError("[coop] poll failed: " + ex); }
+
+            // Flush queued chain arcs and drain the per-frame FX budget.
+            try { WeaponFxSync.Tick(); }
+            catch (Exception ex) { CoopPlugin.Log.LogError("[fx] tick failed: " + ex); }
 
             if (Sortie == null)
             {
@@ -718,7 +723,7 @@ namespace GraveyardOrbit.Coop
                     break;
 
                 case nameof(MessageKind.FxShot):
-                    WeaponFxSync.Play(msg);
+                    WeaponFxSync.EnqueueRemote(msg);
                     if (IsHost) Relay(from, data);
                     break;
 
@@ -740,6 +745,12 @@ namespace GraveyardOrbit.Coop
                 case nameof(MessageKind.TileDestroyed):
                     try { TileSync.Apply(msg.dq, msg.dr); }
                     catch (Exception ex) { CoopPlugin.Log.LogDebug("[tile] apply failed: " + ex.Message); }
+                    if (IsHost) Relay(from, data, Delivery.Reliable);
+                    break;
+
+                case nameof(MessageKind.EnemyKilled):
+                    try { EnemySync.ApplyKill(msg.dq, msg.dr); }
+                    catch (Exception ex) { CoopPlugin.Log.LogDebug("[enemy] kill apply failed: " + ex.Message); }
                     if (IsHost) Relay(from, data, Delivery.Reliable);
                     break;
 
@@ -945,6 +956,7 @@ namespace GraveyardOrbit.Coop
             _returnSent = false;
             _returnApplied = false;
             _clearedSent = false;
+            WeaponFxSync.Reset();
             DestroyAllViews();
             _pending.Clear();
             EnemySync.Reset();

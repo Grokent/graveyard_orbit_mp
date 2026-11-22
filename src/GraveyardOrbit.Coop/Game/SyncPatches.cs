@@ -22,10 +22,24 @@ namespace GraveyardOrbit.Coop
     [HarmonyPatch(typeof(EnemyManager), "DamageTarget")]
     internal static class EnemyDamageInterceptPatch
     {
-        private static bool Prefix(int kind, int idx, int dmg)
+        private static bool Prefix(EnemyManager __instance, int kind, int idx, int dmg)
         {
-            try { return !EnemySync.InterceptClientDamage(kind, idx, dmg); }
+            try { return !EnemySync.InterceptClientDamage(__instance, kind, idx, dmg); }
             catch { return true; }
+        }
+    }
+
+    /// <summary>
+    /// Every enemy kill (weapon, explosion, anomaly effect, local sim) goes
+    /// through KillEnemy; mirror it so peers remove the enemy too.
+    /// </summary>
+    [HarmonyPatch(typeof(EnemyManager), "KillEnemy")]
+    internal static class EnemyKillSyncPatch
+    {
+        private static void Prefix(EnemyManager __instance, int idx)
+        {
+            try { EnemySync.OnLocalKill(__instance, idx); }
+            catch { }
         }
     }
 

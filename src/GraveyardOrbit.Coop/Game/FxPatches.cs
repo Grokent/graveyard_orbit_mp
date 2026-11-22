@@ -120,18 +120,19 @@ namespace GraveyardOrbit.Coop
         }
     }
 
-    /// <summary>Chain-lightning arcs from weapons and enemy stuns.</summary>
+    /// <summary>
+    /// Chain-lightning arcs from weapons and enemy stuns. These are queued and
+    /// sent as one batched message per flush window: with chain-lightning mods
+    /// a laser can emit a hundred arcs a second, and sending each as its own
+    /// packet was the main cause of receive-side hitching.
+    /// </summary>
     [HarmonyPatch(typeof(EnemyManager), "SpawnArc")]
     internal static class SpawnArcFxPatch
     {
         private static void Postfix(Vector3 a, Vector3 b)
         {
             if (CoopSession.Mode == SessionMode.Off) return;
-            try
-            {
-                WeaponFxSync.BroadcastBeamRaw(-1, a, b, new Color(0.62f, 0.32f, 1f),
-                    "SciFiBeams/BeamLaserBlue", 0.05f, weapon: "laser");
-            }
+            try { WeaponFxSync.QueueArc(a, b); }
             catch { }
         }
     }

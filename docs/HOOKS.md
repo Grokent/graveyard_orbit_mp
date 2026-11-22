@@ -74,24 +74,35 @@ State.Planet → State.Build → State.Process → State.TakingOff → State.Sor
 - `MainMenuBoot.StartContract(StructureDef, bool)` — private; host START reflects into it after `SaveSlots.Switch(SaveSlot.Custom)`.
 - Steam: `SteamMatchmaking.CreateLobby(FriendsOnly, 4)`, `SetLobbyJoinable`, `Callback<LobbyCreated_t>`, `Callback<LobbyEnter_t>`, `Callback<GameLobbyJoinRequested_t>`; `SteamFriends.InviteUserToGame`, `ActivateGameOverlayInviteDialog`, friends list + medium avatars.
 
-## Weapon FX sync hooks (MP16)
+## Weapon FX sync hooks (MP18)
 
 All fire events reuse `MessageKind.FxShot`; `NetMessage` now carries `weapon`
-and `mods` plus `w/w2/a0/a1/boom/fx2` for visual parity.
+and `mods` plus `w/w2/a0/a1/boom/fx2` for visual parity. FxShot packets are
+**binary-encoded** (magic byte `0xF1`, see `Protocol.EncodeFx`) so the hot path
+never touches Newtonsoft; rare control messages stay JSON.
 
 | Hook | Fires when | Sends |
 |---|---|---|
-| `WeaponSystem.DrawBeam(int i, Vector3 to, bool showImpact, int slot)` postfix | any laser/pulse/railgun beam or pop | real `SciFiBeams/BeamLaserOrange` prefab, actual `LineRenderer.widthMultiplier`, tinted material colour, `boom` for the endpoint impact |
+| `WeaponSystem.DrawBeam(int i, Vector3 to, bool showImpact, int slot)` postfix | any laser/pulse/railgun beam or pop, throttled per mount/slot (80 ms) | real `SciFiBeams/BeamLaserOrange` prefab, actual `LineRenderer.widthMultiplier`, tinted material colour, `boom` for the endpoint impact |
 | `ResonatorWave.Step(float dt)` prefix | once per pulse/resonator wave, after `SetStyle`/`SetTrail` | centre, max radius, speed, core/halo/trail widths, colour, cone arc |
 | `SweeperSystem.ShowStream(int i, Vector3 from, Vector3 to)` postfix | dynamo stream tick | `SciFiBeams/BeamLaserBlue`, sweeper stream width/colour |
 | `SweeperSystem.TickEmit(int i, float dt)` prefix/postfix | new dynamo orbs | `WeaponFX/ProtonMissileBlue`, surge-scaled, part mods |
 | `SweeperSystem.PlayBlast(Vector3 at, float radius, float mul)` postfix | dynamo nova/blast | `WeaponFX/DomeNukeBlue` scaled by radius |
 | `ProjectileSystem.SpawnStraight(...)` prefix | cannon/shotgun/machine gun | real `visualFx` + `visualScale` + `impactFx`; weapon from `SpawnFamily`, mods from `SpawnPartUid` |
 | `ProjectileSystem.SpawnProbe(...)` prefix | radar probe | same as above |
-| `EnemyManager.SpawnArc(Vector3 a, Vector3 b, float life, float width)` postfix | chain lightning | thin purple lightning line |
+| `EnemyManager.SpawnArc(Vector3 a, Vector3 b, float life, float width)` postfix | chain lightning | queued, flushed every 50 ms as one `fx:"arcs"` batch of up to 48 segments; peers draw it with their own `EnemyManager.SpawnArc` (native lightning line, re-entrancy guarded) |
 | `EnemyManager.SpawnShot(...)` prefix | host enemy shot | mirrored `LavaMissile` projectile with local hull damage |
+| `EnemyManager.KillEnemy(int idx)` prefix | any enemy death (weapon, explosion, anomaly effect, local sim) | `EnemyKilled` (reliable) carrying the enemy cell; peers replay the native kill (death FX, destroy visuals, record cell) with `OnBehaviorLoot` suppressed so the killer's synced loot is not duplicated. Peers that have not revealed the enemy yet also drop it from `_dormant`, so a later tile reveal cannot resurrect it. Snapshot omission remains a fallback: an enemy seen live and then missing from a snapshot is killed, not just hidden. |
+| `EnemyManager.DamageTarget(int kind, int idx, int dmg)` prefix | client damage while host snapshots are fresh | forwards cell+damage to the host (uses the patched `__instance`, not a fresh lookup) |
 
 Line width is never hard-coded for a weapon beam: the sender mirrors the
 renderer's `widthMultiplier` so the peer sees the same thickness as the shooter.
 `CoopPlugin.Awake` applies each patch class in its own try/catch, so one broken
 game target cannot disable the rest of the mod.
+
+**Receive path is budgeted.** `CoopSession.OnPayload` queues FxShot messages
+(`WeaponFxSync.EnqueueRemote`) instead of playing them inline; `CoopSession.Tick`
+drains at most 24 per frame and drops the oldest beyond 160 queued, so a packet
+burst can never hitch a frame. Remote beams are pooled (`RemoteBeam`), waves and
+bolts share one line material, and prefab lookups/`Shader.Find` are cached.
+A `[fx] last 10s: sent=N recv=M dropped=K` line reports the rates.
