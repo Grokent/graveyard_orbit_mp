@@ -82,6 +82,18 @@ and the `BepInEx` folder from the game folder.
    pulling anyone else out of the base or the upgrade screen. A structure clear
    is mirrored to everyone.
 
+The lobby is built for a controller (Steam Deck included): **LB/RB** switch
+sections, the D-pad/stick and A/B work inside one section, and the map pane shows
+the real structure silhouette for whichever contract is highlighted.
+
+- **SESSION** — crew slots on the left, online friends and invites on the right.
+- **CONTRACT** — map cards; A selects the contract for everyone.
+- **START** — host-only launch panel with the selected map and crew count.
+
+`B`/`ESC` puts the window away but keeps the session running (so you can visit
+Settings without dropping the party); **END SESSION** / **LEAVE SESSION** is the
+only action that actually tears the lobby down.
+
 Logs and settings:
 
 - Log: `BepInEx/LogOutput.log`

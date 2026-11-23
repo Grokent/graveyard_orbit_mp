@@ -8,7 +8,7 @@ synced tiles/loot/deaths/radar/weapon FX. No game assets are redistributed.
 
 - **Repo:** https://github.com/Grokent/graveyard_orbit_mp (branch `main`)
 - **License:** MIT (`LICENSE`); BepInEx LGPL-2.1 notices in `THIRD_PARTY_NOTICES.md`
-- **Current build tag:** `MP BUILD 18` — bump `BuildTag` in `CoopPlugin.cs` for
+- **Current build tag:** `MP BUILD 20` — bump `BuildTag` in `CoopPlugin.cs` for
   every functional release; mismatched builds are blocked in the lobby.
 
 ## Environment (assume these, don't re-ask)
@@ -130,6 +130,33 @@ src/GraveyardOrbit.Coop/
 - **UI style:** menu/lobby use MetaUi/MenuStyles/SlabFrame look. Lobby footer
   buttons are plain clickable VisualElements with dark fill + coloured border
   (Button theme states turn green otherwise).
+- **Controller navigation:** the base game ships `GraveyardOrbit.UI.PadNav`
+  (stick/D-pad spatial nav, focus ring, glyph hints, B-to-close). Any new
+  lobby/menu window must join it, not reimplement it: add `pad-modal` to the
+  scrim (scopes focus + `SetModalBack`), register painted VisualElement actions
+  with `PadNav.Register` + `pad-ring`, mark one `pad-default`, and never
+  `Clear()` a list that PadNav is focused in — rebuild rows in place or
+  `PadNav.FocusOn` the replacement.
+- **Lobby navigation model:** three stops switched with LB/RB (START is
+  host-only), polled as `In.PadLBDown`/`In.PadRBDown` on a
+  `schedule.Execute(...).Every(0)` like `RecordsPage`, so the D-pad only ever
+  moves inside one stop: SESSION (roster on the
+  left, friends/invites on the right, plus leave), CONTRACT (map card grid +
+  map pane) and START (host-only launch panel). There is no separate crew/session
+  info pane — anything worth showing is already on screen. Keep every focusable inside
+  its stop's single scroll column — PadNav counts rows scrolled out of view as
+  candidates, and a control sitting next to a scrolling list makes up/down
+  bounce between them. Map detail is rendered from
+  `StructureSilhouette.ThumbLazy`; focus only inspects, A commits.
+  B/ESC only *hide* the lobby (the Steam lobby and session keep running, so
+  Settings are reachable without dropping the party); the SESSION stop's
+  leave/end row is the only teardown path. Do not fold the two together.
+- **UI-scaling mod compatibility** (`Graveyard Orbit UI Scaling`, text
+  100–200%): rows use `minHeight`, never a fixed height; long strings get
+  `Elide()`; detail panes are built once and only their text/colour is updated,
+  and font sizes are never reassigned after creation (the scaling mod rebases its
+  baseline on any size change, so a rebuild makes text visibly jump). The map
+  pane scrolls, including with the right stick.
 
 ## Steam gotchas (learned the hard way)
 
