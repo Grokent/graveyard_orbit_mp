@@ -8,8 +8,8 @@ synced tiles/loot/deaths/radar/weapon FX. No game assets are redistributed.
 
 - **Repo:** https://github.com/Grokent/graveyard_orbit_mp (branch `main`)
 - **License:** MIT (`LICENSE`); BepInEx LGPL-2.1 notices in `THIRD_PARTY_NOTICES.md`
-- **Current build tag:** `MP BUILD 16` — bump `BuildTag` in `CoopPlugin.cs` for
-  every release; mismatched builds are blocked in the lobby.
+- **Current build tag:** `MP BUILD 18` — bump `BuildTag` in `CoopPlugin.cs` for
+  every functional release; mismatched builds are blocked in the lobby.
 
 ## Environment (assume these, don't re-ask)
 
@@ -55,10 +55,13 @@ src/GraveyardOrbit.Coop/
   Game/SpawnFan.cs         15° centred spawn fan
   Game/GameFlow.cs         host START, seed forcing, save capture
   Game/ClientJoin.cs       client save apply, seed force, scene load, win/return
-  Game/EnemySync.cs        host-authoritative enemy snapshots/damage + rotor hide
+  Game/EnemySync.cs        enemy snapshots, host-authority guard, kill sync + dormant removal
   Game/TileSync.cs         destroyed-tile sync + GameState/radar bookkeeping
   Game/LootSync.cs         resource mote sync
-  Game/WeaponFxSync.cs     remote projectile/beam/orb FX
+  Game/WeaponFxSync.cs     remote projectile/beam/orb FX (binary, pooled, frame-budgeted)
+  Game/FxPatches.cs        weapon-fire hooks -> WeaponFxSync (arcs queued/batched)
+  Game/SyncPatches.cs      DamageTarget forward + KillEnemy broadcast
+  Game/ReturnDiagnostics.cs return logging + StructureCleared mirror
   Game/RemoteShipBuilder.cs build remote ship visuals from loadout
   Game/SlotMath.cs         slot angle math
   UI/MenuPatches.cs        inject MULTIPLAYER menu entry
@@ -157,6 +160,54 @@ steam -applaunch 4654120
   hashes and log highlights.
 - Solo/offline testing: `[Debug] OpenLobbyOnMenu = true` auto-opens the lobby.
 
+## Fast paths and dead ends (read before debugging)
+
+**Lag/stutter triage.** If one player stutters only while the other fires, the
+problem is the *receiving* machine: `Transport.Poll` → `Protocol.TryDecode` →
+`WeaponFxSync.Play`. Check the 10 s log line
+`[fx] last 10s: sent=N recv=M dropped=K` before profiling anything else. Chain
+lightning is the worst case (up to ~36 arcs per frame); it is queued, batched
+every 50 ms, and drawn with the native `EnemyManager.SpawnArc`.
+
+**Hot-path rules (each is a regression already fixed once):**
+- Never JSON-encode per-shot messages. `FxShot` is binary (magic `0xF1`); a new
+  field needs edits in **both** `EncodeFx` and `DecodeFx` in `Net/Protocol.cs` —
+  no compiler error if you forget, the packet just desyncs silently.
+- Never `Resources.Load`, `Instantiate`, `lr.material` or `Shader.Find` per
+  received FX. Use `VfxSpawner.Play` (game-pooled), `WeaponFxSync.RentBeam`,
+  `LoadPrefab`, `SharedLineMaterial`.
+- Never mutate a shared material (clone/pool it), and never `AddComponent` per
+  shot on a pooled object (reuse the component).
+- Bound receive work per frame (`MaxFxPerFrame`, `MaxArcDrawPerFrame`) instead of
+  trusting send rates.
+- Any replay path needs an echo guard (`_replayingArcs`, `_applyingKill`) or it
+  loops between peers forever.
+
+**Kills.** Every death funnels through `EnemyManager.KillEnemy` (private) — hook
+that, not the damage sites: `DamageTarget` only sees direct hits, while
+explosions, `DamageEnemiesInBand/Disc`, anomaly effects and local sims bypass
+it. Snapshot omission is only a fallback; `Hide()` is not a kill. Suppress
+`OnBehaviorLoot` during a replay (loot duplicates) and drop the matching
+`_dormant` entry (otherwise it respawns on the next reveal).
+
+**Game-code facts that save a recon pass:**
+- Harmony patches private methods fine, and reflection `Invoke` still runs the
+  patch (safe to route our own `KillEnemy`/`DamageTarget` calls through it).
+- `_active` indices shift on removal → key enemy messages by hex cell.
+- `_dormant` is `List<(Vector2Int, string)>`; the cell is tuple field `Item1`.
+- In a patch use `__instance`; `FindAnyObjectByType` can return another object
+  and silently break index lookups.
+- One `EnemyManager` per sortie; `SpawnArc` is the cheap native lightning line.
+
+**Verify without launching the game.** `dotnet` exists only at `tools/dotnet`
+(`build.sh` exports it). For the binary protocol, build a net9 console app that
+references `bin/Release/GraveyardOrbit.Coop.dll` plus the game's `Managed/*.dll`,
+register
+`AppDomain.AssemblyResolve += (s,e) => Assembly.LoadFrom(Path.Combine(AppContext.BaseDirectory, new AssemblyName(e.Name).Name + ".dll"))`,
+then round-trip `Protocol.Encode/TryDecode` for every `fx` kind and for
+malformed packets. `Update.ps1` cannot run here (no `pwsh`) — review only; test
+`Update.sh` with `--game-dir <temp dir>` containing a dummy `GraveyardOrbit.exe`.
+
 ## Known limitations
 
 - Tile HP/crack stages are local (destruction itself is synced).
@@ -176,3 +227,11 @@ steam -applaunch 4654120
 - Wrap every Harmony patch in try/catch; never let a mod error break gameplay.
 - Functional changes ship with a `BuildTag` bump, a rebuilt zip, and an updated
   `INSTALL.txt`; commit and push to the repo when asked.
+- Release sequence: `./build.sh && ./deploy.sh && ./package.sh`, commit,
+  `git push`, then `git tag -a MP<N> -m "..." && git push origin MP<N>` and
+  `gh release create MP<N> --title "Graveyard Orbit Co-op — MP BUILD <N>"
+  --notes-file <file> --latest release/<zip>`. `gh release create --target
+  <sha>` fails ("tag_name is not a valid tag") — create the tag first.
+- Packaging-only change: `gh release upload MP<N> <zip> --clobber` (no build
+  bump). `package.sh` writes `VERSION.txt` and auto-syncs the build number in
+  the bundled `INSTALL.txt`, and ships `Update.bat/ps1/sh`.
